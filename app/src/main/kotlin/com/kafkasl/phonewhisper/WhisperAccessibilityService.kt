@@ -440,7 +440,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                         var offset = 0
                         while (offset < buffered.size && !streamingFailed) {
                             val length = minOf(8192, buffered.size - offset)
-                            if (!stream.sendAudio(buffered.copyOfRange(offset, offset + length), length)) {
+                            if (streamingSession?.sendAudio(buffered.copyOfRange(offset, offset + length), length) != true) {
                                 streamingFailed = true
                             }
                             offset += length
@@ -537,20 +537,27 @@ class WhisperAccessibilityService : AccessibilityService() {
                 val n = try { audioRecord?.read(buf, 0, buf.size) ?: break }
                         catch (_: Exception) { break }
                 if (n > 0) {
-                    val output = pcmStream ?: break
-                    if (output.size() + n > 16000 * 2 * 600) {
-                        handler.post {
-                            if (state == State.RECORDING) stopAndTranscribe()
+                    // Capture and any pre-roll flush share a monitor, so frames
+                    // reach the server in sample order with no duplicate send.
+                    val accepted = synchronized(pcmLock) {
+                        val output = pcmStream ?: return@synchronized false
+                        if (output.size() + n > 16000 * 2 * 600) {
+                            return@synchronized false
                         }
+                        output.write(buf, 0, n)
+                        if (recordingTransport == "streaming" && streamReady &&
+                            !streamingFailed && streamingSession?.sendAudio(buf, n) != true) {
+                            streamingFailed = true
+                        }
+                        true
+                    }
+                    if (!accepted) {
+                        handler.post { if (state == State.RECORDING) stopAndTranscribe() }
                         break
                     }
-                    output.write(buf, 0, n)
-                    if (recordingTransport == "streaming" && !streamingFailed) {
-                        if (streamingSession?.sendAudio(buf, n) != true) {
-                            streamingFailed = true
-                            handler.post {
-                                showFeedback("Stream interrupted — local batch on stop", 3000)
-                            }
+                    if (streamingFailed && recordingTransport == "streaming") {
+                        handler.post {
+                            showFeedback("Streaming interrupted — local batch on stop", 3000)
                         }
                     }
                 } else if (n < 0) {
@@ -586,12 +593,13 @@ class WhisperAccessibilityService : AccessibilityService() {
         pcmStream = null
 
         if (pcm.isEmpty()) { reset("No audio captured"); return }
+        handler.removeCallbacks(handshakeTimeout)
         if (recordingTransport == "streaming") {
             pendingPcm = pcm
-            if (streamingFailed || streamingSession?.stop() != true) {
+            if (streamingFailed || !streamReady || streamingSession?.stop() != true) {
                 fallBackToLocalBatch("Streaming interrupted")
             } else {
-                handler.postDelayed(finalTimeout, 45000)
+                handler.postDelayed(finalTimeout, 150000)
                 showFeedback("Finalising on AIOS", 3000)
             }
             return
@@ -648,8 +656,11 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     private fun completeSession() {
         handler.removeCallbacks(finalTimeout)
+        handler.removeCallbacks(handshakeTimeout)
+        streamReady = false
         streamingSession?.cancel()
         streamingSession = null
+        streamReady = false
         pendingPcm = null
         state = State.IDLE
         setBusy(false)
@@ -661,8 +672,16 @@ class WhisperAccessibilityService : AccessibilityService() {
         try {
             val node = nodes.firstOrNull { it.isFocused && it.isEditable }
                 ?: return null
-            return FocusTarget(node.packageName?.toString().orEmpty(),
-                node.windowId, node.viewIdResourceName)
+            val rect = android.graphics.Rect()
+            node.getBoundsInScreen(rect)
+            return FocusTarget(
+                node.packageName?.toString().orEmpty(),
+                node.windowId,
+                node.viewIdResourceName,
+                node.className?.toString().orEmpty(),
+                rect,
+                node.isPassword
+            )
         } finally {
             nodes.forEach { it.recycle() }
         }
@@ -681,7 +700,15 @@ class WhisperAccessibilityService : AccessibilityService() {
                     if (node.isFocused && node.isEditable
                         && node.packageName?.toString() == target.packageName
                         && node.windowId == target.windowId
-                        && (target.viewId == null || node.viewIdResourceName == target.viewId)
+                        && !node.isPassword
+                        && (if (target.viewId != null)
+                            node.viewIdResourceName == target.viewId
+                        else {
+                            val bounds = android.graphics.Rect()
+                            node.getBoundsInScreen(bounds)
+                            node.className?.toString().orEmpty() == target.className &&
+                                bounds == target.bounds
+                        })
                     ) {
                         if (tryInjectIntoNode(node, text)) {
                             injected = true
