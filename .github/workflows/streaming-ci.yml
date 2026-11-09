@@ -1,0 +1,26 @@
+name: Streaming dictation validation
+on:
+  push:
+    branches: [feature/local-streaming-stt]
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Android SDK components
+        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
+      - name: Android lint
+        run: ./gradlew :app:lintDebug
+      - name: Debug APK
+        run: ./gradlew :app:assembleDebug
