@@ -351,7 +351,7 @@ class MainActivity : AppCompatActivity() {
         val usePostProcessing = prefs().getBoolean("use_post_processing", false)
         val hasKey = !prefs().getString("api_key", "").isNullOrBlank()
         val hasModel = LocalTranscriber.availableModels(this).isNotEmpty()
-        val mode = prefs().getString("transcription_mode", "streaming") ?: "streaming"
+        val mode = prefs().getString("transcription_mode", "legacy") ?: "legacy"
         val streamUrl = prefs().getString("stream_url",
             "wss://stt.millsho.me/v1/audio/stream").orEmpty()
         val batchUrl = prefs().getString("batch_url",
@@ -415,7 +415,7 @@ class MainActivity : AppCompatActivity() {
         val modes = arrayOf("AIOS streaming (recommended)",
             "AIOS local batch", "Legacy on-device / existing API")
         val values = arrayOf("streaming", "local_batch", "legacy")
-        val current = prefs().getString("transcription_mode", "streaming")
+        val current = prefs().getString("transcription_mode", "legacy")
         android.app.AlertDialog.Builder(this)
             .setTitle("Dictation transport")
             .setSingleChoiceItems(modes, values.indexOf(current).coerceAtLeast(0)) { dialog, choice ->
