@@ -51,7 +51,7 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     private enum class State { IDLE, CONNECTING, RECORDING, TRANSCRIBING }
 
-    private var state = State.IDLE
+    @Volatile private var state = State.IDLE
     private var overlayView: FrameLayout? = null
     private var button: ImageView? = null
     private var spinner: ProgressBar? = null
@@ -478,7 +478,15 @@ class WhisperAccessibilityService : AccessibilityService() {
         setBusy(true)
 
         try { audioRecord?.stop() } catch (_: Exception) {}
-        try { recordingThread?.join(500) } catch (_: InterruptedException) {}
+        try { recordingThread?.join(1500) }
+        catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+        if (recordingThread?.isAlive == true) {
+            streamingSession?.cancel()
+            audioRecord?.release()
+            audioRecord = null
+            reset("Microphone capture did not stop safely")
+            return
+        }
         audioRecord?.release()
         audioRecord = null
         recordingThread = null
