@@ -39,14 +39,13 @@ class StreamingTranscriptTest {
         }
     }
 
-    @Test fun `rejects empty final and update before ready`() {
+    @Test fun `accepts empty no-speech final but rejects update before ready`() {
         val state = StreamingTranscript()
         assertThrows(IllegalArgumentException::class.java) {
             state.receive("""{"type":"update","revision":1,"stable":"","unstable":"x"}""")
         }
         state.receive("""{"type":"ready","version":1}""")
-        assertThrows(IllegalArgumentException::class.java) {
-            state.receive("""{"type":"final","text":""}""")
-        }
+        assertEquals(StreamingTranscript.Event.Final(""),
+            state.receive("""{"type":"final","text":""}"""))
     }
 }
