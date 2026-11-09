@@ -515,6 +515,12 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     /** Record chronological PCM16 frames; send them only after ordered pre-roll flush. */
     private fun startCapture() {
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+            != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            streamingSession?.cancel()
+            reset("Microphone permission unavailable")
+            return
+        }
         val minimum = AudioRecord.getMinBufferSize(
             SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
         )
@@ -529,9 +535,13 @@ class WhisperAccessibilityService : AccessibilityService() {
                 MediaRecorder.AudioSource.MIC, SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufSize
             )
-        } catch (_: Exception) {
+        } catch (_: SecurityException) {
             streamingSession?.cancel()
-            reset("Microphone permission or initialisation failed")
+            reset("Microphone permission revoked")
+            return
+        } catch (_: IllegalArgumentException) {
+            streamingSession?.cancel()
+            reset("Microphone initialisation failed")
             return
         }
 
