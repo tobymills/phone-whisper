@@ -178,12 +178,14 @@ class WhisperAccessibilityService : AccessibilityService() {
 
         var startX = 0; var startY = 0
         var touchX = 0f; var touchY = 0f
+        var touchDownAt = 0L
 
         overlay.setOnTouchListener { v, ev ->
             when (ev.action) {
                 MotionEvent.ACTION_DOWN -> {
                     startX = params.x; startY = params.y
                     touchX = ev.rawX; touchY = ev.rawY
+                    touchDownAt = ev.eventTime
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -199,7 +201,14 @@ class WhisperAccessibilityService : AccessibilityService() {
                 MotionEvent.ACTION_UP -> {
                     val moved = abs(ev.rawX - touchX) + abs(ev.rawY - touchY)
                     if (moved < TAP_THRESHOLD_DP * dp) {
-                        onTap()
+                        if (ev.eventTime - touchDownAt >= 800
+                            && (state == State.CONNECTING || state == State.RECORDING
+                                || (state == State.TRANSCRIBING &&
+                                    recordingTransport != "legacy"))) {
+                            cancelDictation()
+                        } else {
+                            onTap()
+                        }
                     } else {
                         params.x = if (params.x + ringSize / 2 > screenW / 2)
                             screenW - ringSize - margin else margin
@@ -340,6 +349,29 @@ class WhisperAccessibilityService : AccessibilityService() {
             State.RECORDING -> stopAndTranscribe()
             State.TRANSCRIBING -> {}
         }
+    }
+
+    /** Long-press to cancel; no partial or final result is inserted. */
+    private fun cancelDictation() {
+        ++sessionId
+        streamingFailed = true
+        handler.removeCallbacks(finalTimeout)
+        streamingSession?.cancel()
+        streamingSession = null
+        state = State.IDLE
+        try { audioRecord?.stop() } catch (_: Exception) {}
+        try { recordingThread?.join(800) } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+        audioRecord?.release()
+        audioRecord = null
+        recordingThread = null
+        pcmStream = null
+        pendingPcm = null
+        stopPulse()
+        setBusy(false)
+        setAppearance(COLOR_IDLE)
+        showFeedback("Dictation cancelled", 1600)
     }
 
     private fun startRecording() {
