@@ -34,6 +34,10 @@ class StreamingTranscriber(
     private val transcript = StreamingTranscript()
     private var socket: WebSocket? = null
 
+    companion object {
+        private const val MAX_QUEUED_AUDIO_BYTES = 2L * 1024 * 1024
+    }
+
     fun connect(url: String, token: String): Boolean {
         if (!url.startsWith("wss://", ignoreCase = true) || token.isBlank()) {
             return false
@@ -53,8 +57,15 @@ class StreamingTranscriber(
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (terminal.get()) return
+                val message = try {
+                    transcript.receive(text)
+                } catch (_: Exception) {
+                    fail("Invalid streaming server response")
+                    return
+                }
+                // A listener exception is a client fault, not malformed server JSON.
                 try {
-                    when (val message = transcript.receive(text)) {
+                    when (message) {
                         is StreamingTranscript.Event.Ready -> {
                             if (ready.compareAndSet(false, true)) listener.onReady()
                         }
@@ -69,13 +80,16 @@ class StreamingTranscriber(
                         is StreamingTranscript.Event.Error -> fail(message.code)
                     }
                 } catch (_: Exception) {
-                    fail("Invalid streaming server response")
+                    fail("Streaming client callback failed")
                 }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                fail(if (response?.code == 401 || response?.code == 403)
-                    "Streaming authentication rejected" else "Streaming connection failed")
+                fail(when (response?.code) {
+                    401 -> "Streaming authentication rejected"
+                    403, 429, 503 -> "Streaming session busy or refused"
+                    else -> "Streaming connection failed"
+                })
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
@@ -87,7 +101,9 @@ class StreamingTranscriber(
 
     fun sendAudio(frame: ByteArray, size: Int): Boolean {
         if (!ready.get() || stopped.get() || terminal.get() || size <= 0) return false
-        return socket?.send(frame.copyOf(size).toByteString()) == true
+        val current = socket ?: return false
+        if (current.queueSize() + size > MAX_QUEUED_AUDIO_BYTES) return false
+        return current.send(frame.copyOf(size).toByteString())
     }
 
     fun stop(): Boolean {
@@ -147,7 +163,7 @@ class StreamingTranscript {
             "final" -> {
                 require(started && !finished)
                 val value = msg.getString("text")
-                require(value.isNotBlank())
+                // Empty is a valid no-speech final, not a retryable network error.
                 finished = true
                 Event.Final(value)
             }
