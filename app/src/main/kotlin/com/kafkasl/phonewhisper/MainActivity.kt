@@ -28,6 +28,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var audioRowSub: TextView
     private lateinit var accRowSub: TextView
     private lateinit var keyRowSub: TextView
+    private lateinit var transportRowSub: TextView
+    private lateinit var streamUrlSub: TextView
+    private lateinit var batchUrlSub: TextView
+    private lateinit var streamTokenSub: TextView
     private lateinit var promptRowSub: TextView
     private lateinit var promptRow: LinearLayout
     private lateinit var modelContainer: LinearLayout
@@ -98,6 +102,37 @@ class MainActivity : AppCompatActivity() {
             refresh()
         }
         root.addView(cloudRow)
+
+        // Local AIOS transport is independent of legacy on-device/cloud settings.
+        val transportRow = settingsRow("Dictation transport", "AIOS streaming") {
+            chooseTransport()
+        }
+        transportRowSub = transportRow.findViewWithTag("subtitle")
+        root.addView(transportRow)
+
+        val streamUrlRow = settingsRow(
+            "Streaming WebSocket", "wss://stt.millsho.me/v1/audio/stream"
+        ) {
+            editLocalSetting("stream_url", "Streaming WebSocket URL",
+                "wss://stt.millsho.me/v1/audio/stream")
+        }
+        streamUrlSub = streamUrlRow.findViewWithTag("subtitle")
+        root.addView(streamUrlRow)
+
+        val batchUrlRow = settingsRow(
+            "Local batch endpoint", "https://stt.millsho.me/v1/audio/transcriptions"
+        ) {
+            editLocalSetting("batch_url", "Local batch endpoint",
+                "https://stt.millsho.me/v1/audio/transcriptions")
+        }
+        batchUrlSub = batchUrlRow.findViewWithTag("subtitle")
+        root.addView(batchUrlRow)
+
+        val streamTokenRow = settingsRow("AIOS bearer token", "Tap to configure") {
+            editLocalSetting("stream_token", "AIOS bearer token", "", secret = true)
+        }
+        streamTokenSub = streamTokenRow.findViewWithTag("subtitle")
+        root.addView(streamTokenRow)
 
         // Local Models section
         modelContainer = vertical(0)
@@ -310,6 +345,21 @@ class MainActivity : AppCompatActivity() {
         val usePostProcessing = prefs().getBoolean("use_post_processing", false)
         val hasKey = !prefs().getString("api_key", "").isNullOrBlank()
         val hasModel = LocalTranscriber.availableModels(this).isNotEmpty()
+        val mode = prefs().getString("transcription_mode", "streaming") ?: "streaming"
+        val streamUrl = prefs().getString("stream_url",
+            "wss://stt.millsho.me/v1/audio/stream").orEmpty()
+        val batchUrl = prefs().getString("batch_url",
+            "https://stt.millsho.me/v1/audio/transcriptions").orEmpty()
+        val streamToken = prefs().getString("stream_token", "").orEmpty()
+        transportRowSub.text = when (mode) {
+            "streaming" -> "AIOS live streaming + local batch fallback"
+            "local_batch" -> "AIOS local batch transcription"
+            else -> "Legacy on-device / existing API"
+        }
+        streamUrlSub.text = streamUrl
+        batchUrlSub.text = batchUrl
+        streamTokenSub.text = if (streamToken.isBlank()) "Tap to configure"
+            else "Configured (hidden)"
 
         audioRowSub.text = if (audio) "Granted" else "Tap to grant permission"
         accRowSub.text = if (acc) "Enabled" else "Tap to enable in settings"
@@ -336,13 +386,56 @@ class MainActivity : AppCompatActivity() {
         val localReady = useLocal && hasModel
         val cloudReady = !useLocal && hasKey
         val postReady = !usePostProcessing || hasKey
-        val ready = audio && acc && (localReady || cloudReady) && postReady
+        val ready = audio && acc && when (mode) {
+            "streaming" -> streamUrl.startsWith("wss://", true) &&
+                batchUrl.startsWith("https://", true) && streamToken.isNotBlank()
+            "local_batch" -> batchUrl.startsWith("https://", true) &&
+                streamToken.isNotBlank()
+            else -> (localReady || cloudReady) && postReady
+        }
 
         statusSubtitle.text = if (ready) "Ready — tap the overlay dot to dictate" else "Setup required"
         statusSubtitle.setTextColor(if (ready) attrColor(com.google.android.material.R.attr.colorPrimary) else attrColor(android.R.attr.textColorSecondary))
         
         refreshAllCards()
         refreshPromptRows()
+    }
+
+    private fun chooseTransport() {
+        val modes = arrayOf("AIOS streaming (recommended)",
+            "AIOS local batch", "Legacy on-device / existing API")
+        val values = arrayOf("streaming", "local_batch", "legacy")
+        val current = prefs().getString("transcription_mode", "streaming")
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Dictation transport")
+            .setSingleChoiceItems(modes, values.indexOf(current).coerceAtLeast(0)) { dialog, choice ->
+                prefs().edit().putString("transcription_mode", values[choice]).apply()
+                dialog.dismiss()
+                refresh()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun editLocalSetting(key: String, title: String, default: String,
+                                 secret: Boolean = false) {
+        val input = EditText(this).apply {
+            setSingleLine(true)
+            if (secret) {
+                inputType = InputType.TYPE_CLASS_TEXT or
+                    InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }
+            setText(prefs().getString(key, default))
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(input.apply { setPadding(dp(24), dp(8), dp(24), dp(8)) })
+            .setPositiveButton("Save") { _, _ ->
+                prefs().edit().putString(key, input.text.toString().trim()).apply()
+                refresh()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun promptApiKey() {
