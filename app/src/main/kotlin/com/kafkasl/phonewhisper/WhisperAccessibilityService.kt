@@ -60,6 +60,17 @@ class WhisperAccessibilityService : AccessibilityService() {
     private var feedbackLayoutParams: WindowManager.LayoutParams? = null
     private var audioRecord: AudioRecord? = null
     private var pcmStream: ByteArrayOutputStream? = null
+    private val pcmLock = Any()
+    @Volatile private var streamReady = false
+    private var cancelArmedUntil = 0L
+    private val handshakeTimeout = Runnable {
+        if (state == State.RECORDING && recordingTransport == "streaming"
+            && !streamReady && !streamingFailed) {
+            streamingFailed = true
+            streamingSession?.cancel()
+            showFeedback("AIOS connection timed out — local batch on stop", 4000)
+        }
+    }
     private var recordingThread: Thread? = null
     private var streamingSession: StreamingTranscriber? = null
     @Volatile private var streamingFailed = false
@@ -76,7 +87,9 @@ class WhisperAccessibilityService : AccessibilityService() {
     }
 
     private data class FocusTarget(
-        val packageName: String, val windowId: Int, val viewId: String?
+        val packageName: String, val windowId: Int, val viewId: String?,
+        val className: String, val bounds: android.graphics.Rect,
+        val isPassword: Boolean
     )
     private val handler = Handler(Looper.getMainLooper())
     private val hideFeedback = Runnable {
@@ -100,13 +113,14 @@ class WhisperAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
-    override fun onInterrupt() {}
+    override fun onInterrupt() { handler.post { if (state != State.IDLE) cancelDictation() } }
 
     override fun onDestroy() {
         ++sessionId
         streamingSession?.cancel()
         streamingSession = null
         handler.removeCallbacks(finalTimeout)
+        handler.removeCallbacks(handshakeTimeout)
         state = State.IDLE
         try { audioRecord?.stop() } catch (_: Exception) {}
         audioRecord?.release()
@@ -201,12 +215,19 @@ class WhisperAccessibilityService : AccessibilityService() {
                 MotionEvent.ACTION_UP -> {
                     val moved = abs(ev.rawX - touchX) + abs(ev.rawY - touchY)
                     if (moved < TAP_THRESHOLD_DP * dp) {
-                        if (ev.eventTime - touchDownAt >= 800
+                        if (ev.eventTime - touchDownAt >= 1500
                             && (state == State.CONNECTING || state == State.RECORDING
                                 || (state == State.TRANSCRIBING &&
                                     recordingTransport != "legacy"))) {
-                            cancelDictation()
+                            val now = android.os.SystemClock.uptimeMillis()
+                            if (now < cancelArmedUntil) {
+                                cancelDictation()
+                            } else {
+                                cancelArmedUntil = now + 5000
+                                showFeedback("Hold again to discard dictation", 4000)
+                            }
                         } else {
+                            cancelArmedUntil = 0L
                             onTap()
                         }
                     } else {
@@ -355,7 +376,10 @@ class WhisperAccessibilityService : AccessibilityService() {
     private fun cancelDictation() {
         ++sessionId
         streamingFailed = true
+        streamReady = false
+        cancelArmedUntil = 0L
         handler.removeCallbacks(finalTimeout)
+        handler.removeCallbacks(handshakeTimeout)
         streamingSession?.cancel()
         streamingSession = null
         state = State.IDLE
@@ -381,7 +405,12 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
         sessionId++
         finalInserted = false
+        cancelArmedUntil = 0L
         startingFocus = captureFocus()
+        if (startingFocus?.isPassword == true) {
+            reset("Dictation into password fields is disabled")
+            return
+        }
         recordingTransport = prefs().getString("transcription_mode", "legacy") ?: "legacy"
         if (recordingTransport == "streaming") startStreaming()
         else startCapture()
@@ -393,14 +422,38 @@ class WhisperAccessibilityService : AccessibilityService() {
         val token = LocalSecrets.read(this)
         val current = sessionId
         streamingFailed = false
+        streamReady = false
         state = State.CONNECTING
         setBusy(true)
         setAppearance(COLOR_BUSY)
         showFeedback("Connecting to AIOS", 3000)
         val stream = StreamingTranscriber(object : StreamingTranscriber.Listener {
-            override fun onReady() = handler.post {
-                if (current == sessionId && state == State.CONNECTING) startCapture()
-            }.let { Unit }
+            override fun onReady() {
+                handler.post {
+                    if (current != sessionId || state != State.RECORDING || streamingFailed)
+                        return@post
+                    handler.removeCallbacks(handshakeTimeout)
+                    // Sending the buffered pre-roll under the same lock used by
+                    // AudioRecord preserves sample order without truncating speech.
+                    synchronized(pcmLock) {
+                        val buffered = pcmStream?.toByteArray() ?: ByteArray(0)
+                        var offset = 0
+                        while (offset < buffered.size && !streamingFailed) {
+                            val length = minOf(8192, buffered.size - offset)
+                            if (!stream.sendAudio(buffered.copyOfRange(offset, offset + length), length)) {
+                                streamingFailed = true
+                            }
+                            offset += length
+                        }
+                        if (!streamingFailed) streamReady = true
+                    }
+                    if (streamingFailed) {
+                        showFeedback("Streaming interrupted — local batch on stop", 3500)
+                    } else {
+                        showFeedback("AIOS streaming connected", 1200)
+                    }
+                }
+            }
 
             override fun onUpdate(stable: String, unstable: String) {
                 handler.post {
@@ -417,7 +470,8 @@ class WhisperAccessibilityService : AccessibilityService() {
                         || finalInserted) return@post
                     finalInserted = true
                     handler.removeCallbacks(finalTimeout)
-                    injectTextToOriginalFocus(text)
+                    if (text.isBlank()) showFeedback("No speech detected", 2000)
+                    else injectTextToOriginalFocus(text)
                     completeSession()
                 }
             }
@@ -443,8 +497,13 @@ class WhisperAccessibilityService : AccessibilityService() {
         streamingSession = stream
         if (!stream.connect(url, token)) {
             streamingSession = null
-            reset("Set an HTTPS WebSocket endpoint and token")
+            reset("Set a secure WSS endpoint and AIOS token")
+            return
         }
+        // Capture begins immediately; audio recorded before 'ready' is queued
+        // for ordered delivery to prevent clipping the opening words.
+        startCapture()
+        if (state == State.RECORDING) handler.postDelayed(handshakeTimeout, 8000)
     }
 
     private fun startCapture() {
