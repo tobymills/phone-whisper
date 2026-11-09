@@ -437,6 +437,12 @@ class WhisperAccessibilityService : AccessibilityService() {
                     // AudioRecord preserves sample order without truncating speech.
                     synchronized(pcmLock) {
                         val buffered = pcmStream?.toByteArray() ?: ByteArray(0)
+                        // The server limits burst ingress. A handshake longer
+                        // than two seconds cannot replay an unbounded queue:
+                        // preserve the whole recording for local batch instead.
+                        if (buffered.size > SAMPLE_RATE * 2 * 2) {
+                            streamingFailed = true
+                        }
                         var offset = 0
                         while (offset < buffered.size && !streamingFailed) {
                             val length = minOf(8192, buffered.size - offset)
