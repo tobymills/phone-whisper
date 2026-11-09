@@ -178,13 +178,12 @@ bearer token. The token is provided by the user on the phone and not bundled
 in this repository. **Do not install or expect streaming to work until an
 authorised server/NPM deployment has been completed.**
 
-The app streams PCM16LE mono 16 kHz continuously while the microphone is
+Existing installations remain in the legacy on-device/API transport until the user explicitly selects AIOS streaming or local batch. The AIOS token is encrypted using Android Keystore and is never embedded in the APK. The app streams PCM16LE mono 16 kHz continuously while the microphone is
 recording. The overlay can show unstable and stable text; these updates
-never modify another application's field. Long-press the floating microphone for at least 800 ms to cancel local dictation
-without insertion. After the explicit stop and final
+never modify another application's field. To cancel, hold the floating microphone for at least 1.5 seconds, then hold it again within five seconds to confirm disposal without insertion. After the explicit stop and final
 server result, the app inserts once into the field that was focused at
 recording start, or copies to the clipboard if focus changed. A broken
-stream results in explicit local batch fallback from the preserved recording.
+stream results in an explicit local batch fallback from the preserved recording; a no-speech final does not retry batch. If the beginning of the connection takes too long, the app retains audio but switches to batch rather than risking out-of-order sample delivery.
 For manual batch-only use, choose **AIOS local batch**.
 
 Offline Android checks (requires JDK 17 and Android SDK 34):
