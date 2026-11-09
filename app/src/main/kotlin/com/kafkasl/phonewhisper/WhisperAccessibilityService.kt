@@ -382,7 +382,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         sessionId++
         finalInserted = false
         startingFocus = captureFocus()
-        recordingTransport = prefs().getString("transcription_mode", "streaming") ?: "streaming"
+        recordingTransport = prefs().getString("transcription_mode", "legacy") ?: "legacy"
         if (recordingTransport == "streaming") startStreaming()
         else startCapture()
     }
