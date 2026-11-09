@@ -390,7 +390,7 @@ class WhisperAccessibilityService : AccessibilityService() {
     private fun startStreaming() {
         val url = prefs().getString("stream_url", "wss://stt.millsho.me/v1/audio/stream")
             ?: ""
-        val token = prefs().getString("stream_token", "") ?: ""
+        val token = LocalSecrets.read(this)
         val current = sessionId
         streamingFailed = false
         state = State.CONNECTING
@@ -555,7 +555,7 @@ class WhisperAccessibilityService : AccessibilityService() {
     private fun sendLocalBatch(pcm: ByteArray) {
         val url = prefs().getString("batch_url",
             "https://stt.millsho.me/v1/audio/transcriptions") ?: ""
-        val token = prefs().getString("stream_token", "") ?: ""
+        val token = LocalSecrets.read(this)
         val current = sessionId
         LocalBatchClient.transcribe(WavWriter.encode(pcm), url, token) { result ->
             handler.post {
