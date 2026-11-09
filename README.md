@@ -158,3 +158,39 @@ If Phone Whisper saves you time, you can sponsor the project on GitHub:
 ## License
 
 Personal project. Do whatever you want with it.
+
+
+## Local AIOS streaming fork (feature branch; not deployed)
+
+This fork adds an optional local streaming dictation transport while retaining
+the original floating Accessibility microphone, on-device Sherpa-ONNX models,
+legacy batch options and clipboard insertion fallback. The streaming code
+**does not use the legacy OpenAI transcription or cleanup endpoints**.
+
+Read [STREAMING-STT.md](STREAMING-STT.md) for the exact WebSocket v1 protocol,
+security and failure behaviour, Android acceptance criteria and independent
+Claude review guidance.
+
+From the application settings, choose **AIOS streaming**, enter the WSS URL
+(`wss://stt.millsho.me/v1/audio/stream` by default), local HTTPS batch URL
+(`https://stt.millsho.me/v1/audio/transcriptions`), and the existing gateway
+bearer token. The token is provided by the user on the phone and not bundled
+in this repository. **Do not install or expect streaming to work until an
+authorised server/NPM deployment has been completed.**
+
+The app streams PCM16LE mono 16 kHz continuously while the microphone is
+recording. The overlay can show unstable and stable text; these updates
+never modify another application's field. After the explicit stop and final
+server result, the app inserts once into the field that was focused at
+recording start, or copies to the clipboard if focus changed. A broken
+stream results in explicit local batch fallback from the preserved recording.
+For manual batch-only use, choose **AIOS local batch**.
+
+Offline Android checks (requires JDK 17 and Android SDK 34):
+
+```sh
+./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+```
+
+The feature branch is **code staged only**; no on-device, NPM, AIOS,
+shared-GPU or long-dictation performance claims are verified.
