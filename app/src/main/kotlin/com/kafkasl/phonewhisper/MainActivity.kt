@@ -356,7 +356,7 @@ class MainActivity : AppCompatActivity() {
             "wss://stt.millsho.me/v1/audio/stream").orEmpty()
         val batchUrl = prefs().getString("batch_url",
             "https://stt.millsho.me/v1/audio/transcriptions").orEmpty()
-        val streamToken = prefs().getString("stream_token", "").orEmpty()
+        val streamToken = LocalSecrets.read(this)
         transportRowSub.text = when (mode) {
             "streaming" -> "AIOS live streaming + local batch fallback"
             "local_batch" -> "AIOS local batch transcription"
@@ -435,13 +435,20 @@ class MainActivity : AppCompatActivity() {
                 inputType = InputType.TYPE_CLASS_TEXT or
                     InputType.TYPE_TEXT_VARIATION_PASSWORD
             }
-            setText(prefs().getString(key, default))
+            setText(if (secret) LocalSecrets.read(this@MainActivity) else prefs().getString(key, default))
         }
         android.app.AlertDialog.Builder(this)
             .setTitle(title)
             .setView(input.apply { setPadding(dp(24), dp(8), dp(24), dp(8)) })
             .setPositiveButton("Save") { _, _ ->
-                prefs().edit().putString(key, input.text.toString().trim()).apply()
+                val value = input.text.toString().trim()
+                if (secret) {
+                    if (!LocalSecrets.store(this, value)) {
+                        toast("Could not securely store the AIOS token")
+                    }
+                } else {
+                    prefs().edit().putString(key, value).apply()
+                }
                 refresh()
             }
             .setNegativeButton("Cancel", null)
