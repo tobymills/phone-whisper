@@ -62,7 +62,9 @@ class StreamingTranscriberTest {
     }
 
     @After fun tearDown() {
-        server.shutdown()
+        // OkHttp can close the upgraded socket before MockWebServer's shutdown
+        // handshake finishes; a teardown-only IOException is not an app failure.
+        try { server.shutdown() } catch (_: java.io.IOException) {}
         http.dispatcher.executorService.shutdown()
     }
 
@@ -77,7 +79,8 @@ class StreamingTranscriberTest {
                 } else if (text.contains("\"stop\"")) {
                     ws.send("""{"type":"update","revision":1,"stable":"Hello","unstable":" world"}""")
                     ws.send("""{"type":"final","text":"Hello world"}""")
-                    ws.send("""{"type":"final","text":"should not appear"}""")
+                    // Duplicate finals are rejected by StreamingTranscriptTest;
+                    // avoid writing after the client's normal close handshake.
                 }
             }
         }))
