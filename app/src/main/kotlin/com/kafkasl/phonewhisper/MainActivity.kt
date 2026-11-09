@@ -24,6 +24,9 @@ import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
+    private lateinit var cloudSettingsRow: LinearLayout
+    private lateinit var cleanupSettingsRow: LinearLayout
+    private lateinit var apiKeySettingsRow: LinearLayout
     private lateinit var statusSubtitle: TextView
     private lateinit var audioRowSub: TextView
     private lateinit var accRowSub: TextView
@@ -101,6 +104,7 @@ class MainActivity : AppCompatActivity() {
             cloudSwitch.isChecked = newCloud
             refresh()
         }
+        cloudSettingsRow = cloudRow
         root.addView(cloudRow)
 
         // Local AIOS transport is independent of legacy on-device/cloud settings.
@@ -154,6 +158,7 @@ class MainActivity : AppCompatActivity() {
             postProcessSwitch.isChecked = newVal
             refresh()
         }
+        cleanupSettingsRow = postProcessRow
         root.addView(postProcessRow)
 
         promptContainer = vertical(0)
@@ -171,6 +176,7 @@ class MainActivity : AppCompatActivity() {
         
         val keyRow = settingsRow("OpenAI API Key", "Tap to set") { promptApiKey() }
         keyRowSub = keyRow.findViewWithTag("subtitle")
+        apiKeySettingsRow = keyRow
         root.addView(keyRow)
 
         setContentView(ScrollView(this).apply {
@@ -364,9 +370,13 @@ class MainActivity : AppCompatActivity() {
         audioRowSub.text = if (audio) "Granted" else "Tap to grant permission"
         accRowSub.text = if (acc) "Enabled" else "Tap to enable in settings"
 
-        modelContainer.visibility = if (useLocal) View.VISIBLE else View.GONE
-        promptContainer.visibility = if (usePostProcessing) View.VISIBLE else View.GONE
-        promptRow.visibility = if (usePostProcessing) View.VISIBLE else View.GONE
+        val legacy = mode == "legacy"
+        cloudSettingsRow.visibility = if (legacy) View.VISIBLE else View.GONE
+        cleanupSettingsRow.visibility = if (legacy) View.VISIBLE else View.GONE
+        apiKeySettingsRow.visibility = if (legacy) View.VISIBLE else View.GONE
+        modelContainer.visibility = if (legacy && useLocal) View.VISIBLE else View.GONE
+        promptContainer.visibility = if (legacy && usePostProcessing) View.VISIBLE else View.GONE
+        promptRow.visibility = if (legacy && usePostProcessing) View.VISIBLE else View.GONE
 
         val apiKey = prefs().getString("api_key", "") ?: ""
         keyRowSub.text = if (apiKey.isBlank()) "Tap to set" 
