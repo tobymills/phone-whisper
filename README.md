@@ -180,7 +180,8 @@ authorised server/NPM deployment has been completed.**
 
 The app streams PCM16LE mono 16 kHz continuously while the microphone is
 recording. The overlay can show unstable and stable text; these updates
-never modify another application's field. After the explicit stop and final
+never modify another application's field. Long-press the floating microphone for at least 800 ms to cancel local dictation
+without insertion. After the explicit stop and final
 server result, the app inserts once into the field that was focused at
 recording start, or copies to the clipboard if focus changed. A broken
 stream results in explicit local batch fallback from the preserved recording.
