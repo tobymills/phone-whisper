@@ -689,9 +689,7 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     private fun injectTextToOriginalFocus(text: String) {
         val target = startingFocus
-        val clip = ClipData.newPlainText("phonewhisper", text)
-        (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-            .setPrimaryClip(clip)
+        setSensitiveClipboard(text)
         val nodes = findInjectionCandidates()
         var injected = false
         try {
@@ -832,6 +830,22 @@ class WhisperAccessibilityService : AccessibilityService() {
         setAppearance(COLOR_IDLE)
     }
 
+    /**
+     * Preserve the existing clipboard fallback but hide transcript previews
+     * from Android's clipboard UI on API 33+. The clipboard remains a shared
+     * OS facility; this is not equivalent to clearing or encrypting its data.
+     */
+    private fun setSensitiveClipboard(value: String) {
+        val clip = ClipData.newPlainText("phonewhisper", value)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            clip.description.extras = android.os.PersistableBundle().apply {
+                putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
+            }
+        }
+        (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+            .setPrimaryClip(clip)
+    }
+
     // --- Text injection ---
 
     private fun injectText(
@@ -839,8 +853,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         feedback: String? = "Copied to clipboard",
         feedbackDurationMs: Long = 2000
     ) {
-        val clip = ClipData.newPlainText("phonewhisper", text)
-        (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
+        setSensitiveClipboard(text)
         feedback?.let { showFeedback(it, feedbackDurationMs) }
 
         val candidates = findInjectionCandidates()
@@ -933,6 +946,7 @@ class WhisperAccessibilityService : AccessibilityService() {
     }
 
     private fun tryInjectIntoNode(node: AccessibilityNodeInfo, text: String): Boolean {
+        if (node.isPassword) return false
         logNode("Trying node", node)
 
         node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
