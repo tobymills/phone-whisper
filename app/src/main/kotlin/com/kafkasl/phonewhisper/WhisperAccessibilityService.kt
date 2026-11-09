@@ -416,6 +416,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         else startCapture()
     }
 
+    /** Open one WSS session while buffering the microphone from the first tap. */
     private fun startStreaming() {
         val url = prefs().getString("stream_url", "wss://stt.millsho.me/v1/audio/stream")
             ?: ""
@@ -512,16 +513,27 @@ class WhisperAccessibilityService : AccessibilityService() {
         if (state == State.RECORDING) handler.postDelayed(handshakeTimeout, 8000)
     }
 
+    /** Record chronological PCM16 frames; send them only after ordered pre-roll flush. */
     private fun startCapture() {
-        val bufSize = AudioRecord.getMinBufferSize(
+        val minimum = AudioRecord.getMinBufferSize(
             SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
         )
+        if (minimum <= 0) {
+            streamingSession?.cancel()
+            reset("Microphone format unavailable")
+            return
+        }
+        val bufSize = maxOf(minimum, 4096).let { if (it % 2 == 0) it else it + 1 }
         audioRecord = try {
             AudioRecord(
                 MediaRecorder.AudioSource.MIC, SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufSize
             )
-        } catch (_: SecurityException) { toast("Audio permission denied"); return }
+        } catch (_: Exception) {
+            streamingSession?.cancel()
+            reset("Microphone permission or initialisation failed")
+            return
+        }
 
         pcmStream = ByteArrayOutputStream()
         try {
@@ -575,6 +587,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Stop and join capture before sending stop or the complete local batch fallback. */
     private fun stopAndTranscribe() {
         state = State.TRANSCRIBING
         stopPulse()
@@ -625,6 +638,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Send complete retained PCM to the configured AIOS HTTPS batch endpoint only. */
     private fun sendLocalBatch(pcm: ByteArray) {
         val url = prefs().getString("batch_url",
             "https://stt.millsho.me/v1/audio/transcriptions") ?: ""
@@ -645,7 +659,9 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Make one deliberate fallback attempt; never paste a partial stream result. */
     private fun fallBackToLocalBatch(reason: String) {
+        handler.removeCallbacks(handshakeTimeout)
         streamingSession?.cancel()
         streamingSession = null
         handler.removeCallbacks(finalTimeout)
@@ -660,19 +676,20 @@ class WhisperAccessibilityService : AccessibilityService() {
         sendLocalBatch(pcm)
     }
 
+    /** Release session buffers and timers after one final success or no-speech result. */
     private fun completeSession() {
         handler.removeCallbacks(finalTimeout)
         handler.removeCallbacks(handshakeTimeout)
         streamReady = false
         streamingSession?.cancel()
         streamingSession = null
-        streamReady = false
         pendingPcm = null
         state = State.IDLE
         setBusy(false)
         setAppearance(COLOR_IDLE)
     }
 
+    /** Snapshot a focused editor's identity without retaining stale accessibility nodes. */
     private fun captureFocus(): FocusTarget? {
         val nodes = findInjectionCandidates()
         try {
@@ -693,6 +710,11 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * Paste once only into the original focused editable node. Identity is
+     * conservative: if a view ID is unavailable, require matching class and
+     * screen bounds; otherwise leave the transcript on the sensitive clipboard.
+     */
     private fun injectTextToOriginalFocus(text: String) {
         val target = startingFocus
         setSensitiveClipboard(text)
@@ -825,8 +847,12 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Report a terminal local error; future callbacks are ignored by session ID. */
     private fun reset(msg: String) {
         handler.removeCallbacks(finalTimeout)
+        handler.removeCallbacks(handshakeTimeout)
+        streamReady = false
+        stopPulse()
         streamingSession?.cancel()
         streamingSession = null
         pendingPcm = null
