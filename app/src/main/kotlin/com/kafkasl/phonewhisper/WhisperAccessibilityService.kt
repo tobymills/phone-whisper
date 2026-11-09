@@ -49,7 +49,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         private const val COLOR_RING = 0xFFE8EAED.toInt()
     }
 
-    private enum class State { IDLE, RECORDING, TRANSCRIBING }
+    private enum class State { IDLE, CONNECTING, RECORDING, TRANSCRIBING }
 
     private var state = State.IDLE
     private var overlayView: FrameLayout? = null
@@ -60,6 +60,24 @@ class WhisperAccessibilityService : AccessibilityService() {
     private var feedbackLayoutParams: WindowManager.LayoutParams? = null
     private var audioRecord: AudioRecord? = null
     private var pcmStream: ByteArrayOutputStream? = null
+    private var recordingThread: Thread? = null
+    private var streamingSession: StreamingTranscriber? = null
+    @Volatile private var streamingFailed = false
+    private var recordingTransport = "legacy"
+    private var sessionId = 0
+    private var finalInserted = false
+    private var pendingPcm: ByteArray? = null
+    private var startingFocus: FocusTarget? = null
+    private val finalTimeout = Runnable {
+        if (state == State.TRANSCRIBING && recordingTransport == "streaming") {
+            streamingSession?.cancel()
+            fallBackToLocalBatch("Streaming finalisation timed out")
+        }
+    }
+
+    private data class FocusTarget(
+        val packageName: String, val windowId: Int, val viewId: String?
+    )
     private val handler = Handler(Looper.getMainLooper())
     private val hideFeedback = Runnable {
         feedbackView?.animate()?.alpha(0f)?.setDuration(180)?.withEndAction {
@@ -85,8 +103,16 @@ class WhisperAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {}
 
     override fun onDestroy() {
-        instance = null
+        ++sessionId
+        streamingSession?.cancel()
+        streamingSession = null
+        handler.removeCallbacks(finalTimeout)
+        state = State.IDLE
+        try { audioRecord?.stop() } catch (_: Exception) {}
+        audioRecord?.release()
+        audioRecord = null
         removeOverlay()
+        instance = null
         super.onDestroy()
     }
 
@@ -305,6 +331,12 @@ class WhisperAccessibilityService : AccessibilityService() {
     private fun onTap() {
         when (state) {
             State.IDLE -> startRecording()
+            State.CONNECTING -> {
+                ++sessionId
+                streamingSession?.cancel()
+                streamingSession = null
+                reset("Streaming cancelled")
+            }
             State.RECORDING -> stopAndTranscribe()
             State.TRANSCRIBING -> {}
         }
@@ -315,7 +347,75 @@ class WhisperAccessibilityService : AccessibilityService() {
             != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             toast("Grant audio permission in Phone Whisper app"); return
         }
+        sessionId++
+        finalInserted = false
+        startingFocus = captureFocus()
+        recordingTransport = prefs().getString("transcription_mode", "streaming") ?: "streaming"
+        if (recordingTransport == "streaming") startStreaming()
+        else startCapture()
+    }
 
+    private fun startStreaming() {
+        val url = prefs().getString("stream_url", "wss://stt.millsho.me/v1/audio/stream")
+            ?: ""
+        val token = prefs().getString("stream_token", "") ?: ""
+        val current = sessionId
+        streamingFailed = false
+        state = State.CONNECTING
+        setBusy(true)
+        setAppearance(COLOR_BUSY)
+        showFeedback("Connecting to AIOS", 3000)
+        val stream = StreamingTranscriber(object : StreamingTranscriber.Listener {
+            override fun onReady() = handler.post {
+                if (current == sessionId && state == State.CONNECTING) startCapture()
+            }.let { Unit }
+
+            override fun onUpdate(stable: String, unstable: String) {
+                handler.post {
+                    if (current == sessionId && state == State.RECORDING) {
+                        val displayed = (stable + " " + unstable).trim().takeLast(150)
+                        if (displayed.isNotBlank()) showFeedback(displayed, 3000)
+                    }
+                }
+            }
+
+            override fun onFinal(text: String) {
+                handler.post {
+                    if (current != sessionId || state != State.TRANSCRIBING
+                        || finalInserted) return@post
+                    finalInserted = true
+                    handler.removeCallbacks(finalTimeout)
+                    injectTextToOriginalFocus(text)
+                    completeSession()
+                }
+            }
+
+            override fun onError(reason: String) {
+                handler.post {
+                    if (current != sessionId) return@post
+                    when (state) {
+                        State.RECORDING -> {
+                            streamingFailed = true
+                            showFeedback("Stream lost — local batch on stop", 3000)
+                        }
+                        State.CONNECTING -> reset(reason)
+                        State.TRANSCRIBING -> {
+                            handler.removeCallbacks(finalTimeout)
+                            fallBackToLocalBatch(reason)
+                        }
+                        else -> {}
+                    }
+                }
+            }
+        })
+        streamingSession = stream
+        if (!stream.connect(url, token)) {
+            streamingSession = null
+            reset("Set an HTTPS WebSocket endpoint and token")
+        }
+    }
+
+    private fun startCapture() {
         val bufSize = AudioRecord.getMinBufferSize(
             SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
         )
@@ -327,17 +427,46 @@ class WhisperAccessibilityService : AccessibilityService() {
         } catch (_: SecurityException) { toast("Audio permission denied"); return }
 
         pcmStream = ByteArrayOutputStream()
-        audioRecord!!.startRecording()
+        try {
+            audioRecord!!.startRecording()
+        } catch (_: Exception) {
+            audioRecord?.release()
+            audioRecord = null
+            reset("Could not start microphone")
+            return
+        }
         state = State.RECORDING
         setBusy(false)
         setAppearance(COLOR_RECORDING)
         startPulse()
 
-        thread {
-            val buf = ByteArray(bufSize)
+        recordingThread = thread {
+            val buf = ByteArray(minOf(bufSize, 8192))
             while (state == State.RECORDING) {
-                val n = audioRecord?.read(buf, 0, buf.size) ?: break
-                if (n > 0) pcmStream?.write(buf, 0, n)
+                val n = try { audioRecord?.read(buf, 0, buf.size) ?: break }
+                        catch (_: Exception) { break }
+                if (n > 0) {
+                    val output = pcmStream ?: break
+                    if (output.size() + n > 16000 * 2 * 600) {
+                        handler.post {
+                            if (state == State.RECORDING) stopAndTranscribe()
+                        }
+                        break
+                    }
+                    output.write(buf, 0, n)
+                    if (recordingTransport == "streaming" && !streamingFailed) {
+                        if (streamingSession?.sendAudio(buf, n) != true) {
+                            streamingFailed = true
+                            handler.post {
+                                showFeedback("Stream interrupted — local batch on stop", 3000)
+                            }
+                        }
+                    }
+                } else if (n < 0) {
+                    streamingFailed = true
+                    handler.post { if (state == State.RECORDING) stopAndTranscribe() }
+                    break
+                }
             }
         }
     }
@@ -348,14 +477,30 @@ class WhisperAccessibilityService : AccessibilityService() {
         setAppearance(COLOR_BUSY)
         setBusy(true)
 
-        audioRecord?.stop()
+        try { audioRecord?.stop() } catch (_: Exception) {}
+        try { recordingThread?.join(500) } catch (_: InterruptedException) {}
         audioRecord?.release()
         audioRecord = null
+        recordingThread = null
 
         val pcm = pcmStream?.toByteArray() ?: ByteArray(0)
         pcmStream = null
 
         if (pcm.isEmpty()) { reset("No audio captured"); return }
+        if (recordingTransport == "streaming") {
+            pendingPcm = pcm
+            if (streamingFailed || streamingSession?.stop() != true) {
+                fallBackToLocalBatch("Streaming interrupted")
+            } else {
+                handler.postDelayed(finalTimeout, 45000)
+                showFeedback("Finalising on AIOS", 3000)
+            }
+            return
+        }
+        if (recordingTransport == "local_batch") {
+            sendLocalBatch(pcm)
+            return
+        }
 
         val useLocal = prefs().getBoolean("use_local", true)
         val local = localTranscriber
@@ -365,6 +510,91 @@ class WhisperAccessibilityService : AccessibilityService() {
         } else {
             transcribeApi(pcm)
         }
+    }
+
+    private fun sendLocalBatch(pcm: ByteArray) {
+        val url = prefs().getString("batch_url",
+            "https://stt.millsho.me/v1/audio/transcriptions") ?: ""
+        val token = prefs().getString("stream_token", "") ?: ""
+        val current = sessionId
+        LocalBatchClient.transcribe(WavWriter.encode(pcm), url, token) { result ->
+            handler.post {
+                if (current != sessionId || state != State.TRANSCRIBING
+                    || finalInserted) return@post
+                if (!result.text.isNullOrBlank()) {
+                    finalInserted = true
+                    injectTextToOriginalFocus(result.text)
+                    completeSession()
+                } else {
+                    reset(result.error ?: "Local batch transcription failed")
+                }
+            }
+        }
+    }
+
+    private fun fallBackToLocalBatch(reason: String) {
+        streamingSession?.cancel()
+        streamingSession = null
+        handler.removeCallbacks(finalTimeout)
+        if (recordingTransport == "local_batch_fallback") return
+        recordingTransport = "local_batch_fallback"
+        val pcm = pendingPcm
+        if (pcm == null) {
+            reset(reason)
+            return
+        }
+        showFeedback("Using local batch fallback", 3000)
+        sendLocalBatch(pcm)
+    }
+
+    private fun completeSession() {
+        handler.removeCallbacks(finalTimeout)
+        streamingSession?.cancel()
+        streamingSession = null
+        pendingPcm = null
+        state = State.IDLE
+        setBusy(false)
+        setAppearance(COLOR_IDLE)
+    }
+
+    private fun captureFocus(): FocusTarget? {
+        val nodes = findInjectionCandidates()
+        try {
+            val node = nodes.firstOrNull { it.isFocused && it.isEditable }
+                ?: return null
+            return FocusTarget(node.packageName?.toString().orEmpty(),
+                node.windowId, node.viewIdResourceName)
+        } finally {
+            nodes.forEach { it.recycle() }
+        }
+    }
+
+    private fun injectTextToOriginalFocus(text: String) {
+        val target = startingFocus
+        val clip = ClipData.newPlainText("phonewhisper", text)
+        (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+            .setPrimaryClip(clip)
+        val nodes = findInjectionCandidates()
+        var injected = false
+        try {
+            if (target != null) {
+                for (node in nodes) {
+                    if (node.isFocused && node.isEditable
+                        && node.packageName?.toString() == target.packageName
+                        && node.windowId == target.windowId
+                        && (target.viewId == null || node.viewIdResourceName == target.viewId)
+                    ) {
+                        if (tryInjectIntoNode(node, text)) {
+                            injected = true
+                            break
+                        }
+                    }
+                }
+            }
+        } finally {
+            nodes.forEach { it.recycle() }
+        }
+        showFeedback(if (injected) "Inserted" else "Focus changed — copied to clipboard", 3000)
     }
 
     private fun transcribeLocal(pcm: ByteArray, transcriber: LocalTranscriber) {
@@ -466,6 +696,10 @@ class WhisperAccessibilityService : AccessibilityService() {
     }
 
     private fun reset(msg: String) {
+        handler.removeCallbacks(finalTimeout)
+        streamingSession?.cancel()
+        streamingSession = null
+        pendingPcm = null
         toast(msg)
         state = State.IDLE
         setBusy(false)
@@ -619,7 +853,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
         Log.i(
             TAG,
-            "$prefix package=${node.packageName} class=${node.className} focused=${node.isFocused} editable=${node.isEditable} text=${node.text} desc=${node.contentDescription} actions=[$actions]"
+            "$prefix package=${node.packageName} class=${node.className} focused=${node.isFocused} editable=${node.isEditable} actions=[$actions]"
         )
     }
 
