@@ -1162,14 +1162,10 @@ class WhisperAccessibilityService : AccessibilityService() {
             action.label?.toString()?.contains("paste", ignoreCase = true) == true
         }
 
+    /** Diagnostic flags only: never log view contents, package, classes or action labels. */
     private fun logNode(prefix: String, node: AccessibilityNodeInfo) {
-        val actions = node.actionList.joinToString { action ->
-            action.label?.toString() ?: action.id.toString()
-        }
-        Log.i(
-            TAG,
-            "$prefix package=${node.packageName} class=${node.className} focused=${node.isFocused} editable=${node.isEditable} actions=[$actions]"
-        )
+        Log.i(TAG, "$prefix focused=${node.isFocused} editable=${node.isEditable}" +
+            " action_count=${node.actionList.size}")
     }
 
     private fun prefs() = getSharedPreferences("phonewhisper", MODE_PRIVATE)
