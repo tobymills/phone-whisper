@@ -1053,7 +1053,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         val candidates = mutableListOf<AccessibilityNodeInfo>()
 
         rootInActiveWindow?.let { root ->
-            Log.i(TAG, "Active root: package=${root.packageName} class=${root.className}")
+            Log.i(TAG, "Active accessibility root available")
             collectInjectionCandidates(root, candidates)
             root.recycle()
         }
@@ -1064,7 +1064,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                 val root = window.root ?: return@forEach
                 Log.i(
                     TAG,
-                    "Window root: type=${window.type} active=${window.isActive} focused=${window.isFocused} package=${root.packageName} class=${root.className}"
+                    "Window root: type=${window.type} active=${window.isActive} focused=${window.isFocused} metadata=redacted"
                 )
                 collectInjectionCandidates(root, candidates)
                 root.recycle()
@@ -1128,7 +1128,7 @@ class WhisperAccessibilityService : AccessibilityService() {
 
         findCustomPasteAction(node)?.let { action ->
             val ok = node.performAction(action.id)
-            Log.i(TAG, "Custom action '${action.label}' (${action.id}) => $ok")
+            Log.i(TAG, "Custom paste action succeeded=$ok")
             if (ok) return true
         }
 
