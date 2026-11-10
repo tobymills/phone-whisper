@@ -24,7 +24,7 @@ object SessionDiagnostics {
             "stream_success", "legacy_success", "injected", "clipboard",
             "cancelled", "failed"
         )
-        val allowedSources = setOf("streaming", "local_batch", "legacy")
+        val allowedSources = setOf("streaming", "local_batch", "batch_fallback", "legacy")
         if (stage !in allowedStages || source !in allowedSources) return
         val summary = "$source · $stage · ${safeId.take(8)}"
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
