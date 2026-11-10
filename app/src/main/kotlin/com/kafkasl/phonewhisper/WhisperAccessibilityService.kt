@@ -120,36 +120,78 @@ class WhisperAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Focus and window changes both affect whether an editor is active.
-        // These events are declared in accessibility_service_config.xml.
+        // Custom editors may expose text-selection/content updates instead of focus.
+        // Inspect node capabilities, never event text.
         when (event?.eventType) {
             AccessibilityEvent.TYPE_VIEW_FOCUSED,
+            AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED,
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED -> updateOverlayVisibility()
         }
     }
 
-    /** Show only when an editable, non-password input owns focus, unless overridden. */
+    /** Re-evaluate current focus without retaining user text or nodes. */
     fun updateOverlayVisibility() {
-        handler.post {
-            val shouldShow = OverlayPolicy.visible(
-                prefs().getString("overlay_visibility", "focused") ?: "focused",
-                state != State.IDLE, hasEditableFocus()
-            )
-            overlayView?.visibility = if (shouldShow) View.VISIBLE else View.GONE
-            if (shouldShow && state == State.IDLE) scheduleIdleDock()
-            else handler.removeCallbacks(dockIdle)
+        handler.removeCallbacks(refreshOverlay)
+        handler.postDelayed(refreshOverlay, 80)
+    }
+
+    private val refreshOverlay = Runnable {
+        val focus = currentEditorFocus()
+        val shouldShow = OverlayPolicy.visible(
+            prefs().getString("overlay_visibility", "focused") ?: "focused",
+            state != State.IDLE, focus == EditorFocus.EDITOR,
+            focus == EditorFocus.PASSWORD
+        )
+        overlayView?.visibility = if (shouldShow) View.VISIBLE else View.GONE
+        if (shouldShow && state == State.IDLE) scheduleIdleDock()
+        else handler.removeCallbacks(dockIdle)
+    }
+
+    private enum class EditorFocus { NONE, EDITOR, PASSWORD }
+
+    private fun currentEditorFocus(): EditorFocus {
+        val root = rootInActiveWindow ?: return EditorFocus.NONE
+        return try {
+            val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            val result = try {
+                focused?.let { classifyEditor(it) } ?: EditorFocus.NONE
+            } finally {
+                focused?.recycle()
+            }
+            if (result != EditorFocus.NONE) result else findFocusedEditor(root)
+        } finally {
+            root.recycle()
         }
     }
 
-    private fun hasEditableFocus(): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-        return try {
-            focused?.isEditable == true && focused.isFocused && !focused.isPassword
-        } finally {
-            focused?.recycle()
+    private fun classifyEditor(node: AccessibilityNodeInfo): EditorFocus {
+        if (!node.isFocused) return EditorFocus.NONE
+        if (node.isPassword) return EditorFocus.PASSWORD
+        val canSetText = node.actionList.any {
+            it.id == AccessibilityNodeInfo.ACTION_SET_TEXT
         }
+        return if (EditorFocusPolicy.isEditor(
+                node.isFocused, node.isEditable, canSetText,
+                node.className?.toString().orEmpty()
+            )) EditorFocus.EDITOR else EditorFocus.NONE
+    }
+
+    /** Custom hierarchies may not return their text input via FOCUS_INPUT. */
+    private fun findFocusedEditor(node: AccessibilityNodeInfo): EditorFocus {
+        val current = classifyEditor(node)
+        if (current != EditorFocus.NONE) return current
+        for (index in 0 until node.childCount) {
+            val child = node.getChild(index) ?: continue
+            try {
+                val found = findFocusedEditor(child)
+                if (found != EditorFocus.NONE) return found
+            } finally {
+                child.recycle()
+            }
+        }
+        return EditorFocus.NONE
     }
 
     /** Recess only an idle button; keep a usable edge handle for a tap or drag. */
@@ -200,6 +242,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         handler.removeCallbacks(finalTimeout)
         handler.removeCallbacks(handshakeTimeout)
         handler.removeCallbacks(dockIdle)
+        handler.removeCallbacks(refreshOverlay)
         if (state != State.IDLE) recordStage("cancelled",
             if (recordingTransport == "local_batch_fallback") "batch_fallback" else recordingTransport)
         state = State.IDLE
