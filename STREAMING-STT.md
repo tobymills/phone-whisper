@@ -1,6 +1,6 @@
 # Phone Whisper fork: local streaming dictation contract
 
-Status: **repository development**, not Android-device or AIOS live-verified. Starting main: `e6518cda437ed2c266f36cf476db857fa2690d87`. Feature branch: `feature/local-streaming-stt`.
+Status: **experimental UI/diagnostics update**, not yet installed or accepted on a physical Android device. The earlier streaming APK successfully dictated to AIOS on 10 November 2026; WebSocket handshakes and model health were verified independently. This does not establish long-session/fallback acceptance. Starting main: `e6518cda437ed2c266f36cf476db857fa2690d87`. Feature branch: `feature/local-streaming-stt`.
 
 ## Fork and compatibility
 
@@ -17,6 +17,45 @@ The wire version 1 contract is defined in `tobymills/Homelab-Scripts/apps/speech
 The original legacy transport remains the default for existing users until they explicitly select AIOS. Client states: idle → connecting/recording (buffered) → finalising → inserting → idle, with explicit cancelled/failed exits. On initial connect failure, tell the user; optionally switch to local batch using a complete buffered capture, only if the selected fallback allows it and size limits are met. If a socket drops mid-dictation, **do not reconnect as if no samples were lost**. Either send the complete buffered recording to the local batch endpoint or fail explicitly, leaving the clipboard/target untouched. Never silently paste partial text. Track the selected focused field at session start; avoid inserting into a different window without the user explicitly refocusing. Cancel on Accessibility service destruction, microphone failure or permission loss. A deliberate double-hold cancellation gesture prevents accidental loss from a single long tap. A session must not insert into password fields; focus matching uses window/package and a view ID or class/bounds. Clipboard fallback is marked sensitive on API 33+ but remains OS-accessible. Handle Android activity/service lifecycle, background execution restrictions, audio interrupts, handshake/idle/stop timeout, invalid server messages, WebSocket closure, repeated tap and session generation races.
 
 The current Android batch implementation uses Sherpa-ONNX locally or OpenAI endpoints. Preserve that code as legacy compatibility, but **new local-only streaming + batch fallback must never invoke it**. Store the server URL in private preferences and encrypt the bearer token with an Android Keystore-backed AES-GCM key (including migration of earlier plaintext preference entries) (no logs/crash messages). Require TLS for off-host endpoints; do not accept insecure `ws://` by default. Limit locally retained audio and avoid logging audio, transcript, access tokens or target field text.
+
+## Overlay behaviour and diagnostics (pending updated APK acceptance)
+
+The microphone overlay is available in two user-selected modes:
+`Only when typing` (default: a non-password editable input currently focused)
+and `Always`. It remains visible throughout active capture and finalisation
+even if the input loses focus, so stopping or cancelling stays possible.
+The Accessibility service listens for focus and window-change events and
+re-evaluates visibility; specific apps may have inaccessible/custom fields.
+Idle edge docking is separately configurable (default On): after 2.5 seconds
+the bubble recesses, leaving a 28dp touch target at the selected side.
+Dragging snaps to the nearest edge; tapping a recessed bubble expands it.
+The live preview and short status messages are placed in a touch-through
+overlay at the top of the display (up to three lines), not adjacent to the
+stop button. Actual OEM overlay clipping, gesture hit areas and rotation
+handling still need live verification.
+
+The phone creates a random 32-character hexadecimal session ID on starting
+each recording. For streaming it forwards this as the `X-Session-ID` header
+on the authenticated WSS handshake; the server validates its format and
+emits safe session milestones: admission, first audio, inference latency,
+frame count, audio duration, rejection code and completion. Android logs
+redacted events under `PhoneWhisperStream` and `PhoneWhisperSession`.
+The in-app `Last dictation` setting stores one compact local outcome and
+distinguishes `streaming`, `local_batch`, `batch_fallback` and `legacy`.
+These are **diagnostics**, not an audio or transcript history. No bearer,
+raw audio, transcription content, clipboard values or editable-field text
+are written by this new logging path.
+
+A streaming error shown during a recording can be followed by a successful
+local batch fallback. The app now displays at most one interruption warning
+per session and labels the final source as batch fallback when applicable.
+This does **not** assert that the original interrupted-session root cause
+has been identified; use the matching client/server session IDs and real
+phone tests to determine whether it is backpressure, a server rejection,
+network transport or another fault.
+
+Legacy still needs a previously downloaded Sherpa-ONNX model or an OpenAI
+key. Uninstalling the original application can remove those prerequisites.
 
 ## Build and tests
 
