@@ -160,7 +160,7 @@ If Phone Whisper saves you time, you can sponsor the project on GitHub:
 Personal project. Do whatever you want with it.
 
 
-## Local AIOS streaming fork (feature branch; not deployed)
+## Local AIOS streaming fork (feature branch; experimental)
 
 This fork adds an optional local streaming dictation transport while retaining
 the original floating Accessibility microphone, on-device Sherpa-ONNX models,
@@ -175,8 +175,9 @@ From the application settings, choose **AIOS streaming**, enter the WSS URL
 (`wss://stt.millsho.me/v1/audio/stream` by default), local HTTPS batch URL
 (`https://stt.millsho.me/v1/audio/transcriptions`), and the existing gateway
 bearer token. The token is provided by the user on the phone and not bundled
-in this repository. **Do not install or expect streaming to work until an
-authorised server/NPM deployment has been completed.**
+in this repository. The user has verified a successful AIOS streaming dictation on 10 November 2026;
+this does not yet constitute acceptance of long sessions, fallback reliability,
+or the new overlay UI on a physical device.
 
 Existing installations remain in the legacy on-device/API transport until the user explicitly selects AIOS streaming or local batch. The AIOS token is encrypted using Android Keystore and is never embedded in the APK. The app streams PCM16LE mono 16 kHz continuously while the microphone is
 recording. The overlay can show unstable and stable text; these updates
@@ -192,5 +193,30 @@ Offline Android checks (requires JDK 17 and Android SDK 34):
 ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
 
-The feature branch is **code staged only**; no on-device, NPM, AIOS,
-shared-GPU or long-dictation performance claims are verified.
+The earlier release has been tested on AIOS with successful authenticated internal
+and public WebSocket handshakes, and a real phone has produced a transcription
+using AIOS streaming. The updated overlay and diagnostics features still require
+a new APK and device acceptance.
+
+### Overlay and troubleshooting
+
+The **Microphone button** setting offers **Only when typing** (default)
+or **Always**. In focused-only mode, the overlay appears only while a
+non-password editable input has focus, but stays visible during dictation and
+finalisation. **Recess button when idle** partially hides the idle microphone
+at the nearest edge after 2.5 seconds; dragging repositions it. Live transcript
+and brief status messages appear in a non-interactive panel near the top of
+the display, not next to the stop control.
+
+**Last dictation** in Settings displays the last local session stage and
+transcription source (streaming, batch fallback, local batch or legacy) with a
+short correlation ID; it is not a transcript history. For further investigation
+use Android Logcat tags `PhoneWhisperSession` and `PhoneWhisperStream`
+and the matching `session=<id>` in AIOS `stt-streaming` logs. Never copy
+credentials, transcript text or audio into diagnostic reports. The gateway
+and inference process are separate from the Android UI; a successful WebSocket
+handshake by itself does not prove audio decoding.
+
+Legacy still requires an on-device model or OpenAI API key; reinstalling the
+app removes downloaded models and local settings. The AIOS local batch mode
+is independent of those requirements.
