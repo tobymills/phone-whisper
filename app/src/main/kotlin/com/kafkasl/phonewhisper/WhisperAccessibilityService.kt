@@ -559,6 +559,10 @@ class WhisperAccessibilityService : AccessibilityService() {
                         if (!streamingFailed) streamReady = true
                     }
                     if (streamingFailed) {
+                        // Abandon the failing WSS session immediately; the full
+                        // microphone recording is retained for one HTTPS batch retry.
+                        streamReady = false
+                        streamingSession?.cancel()
                         recordStreamFailure("Streaming interrupted — local batch on stop")
                     } else {
                         recordStage("connected")
@@ -569,7 +573,8 @@ class WhisperAccessibilityService : AccessibilityService() {
 
             override fun onUpdate(stable: String, unstable: String) {
                 handler.post {
-                    if (current == sessionId && state == State.RECORDING) {
+                    if (current == sessionId && state == State.RECORDING &&
+                        !streamingFailed) {
                         val displayed = (stable + " " + unstable).trim().takeLast(150)
                         if (displayed.isNotBlank()) showFeedback(displayed, 3000)
                     }
@@ -596,6 +601,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                     when (state) {
                         State.RECORDING -> {
                             streamingFailed = true
+                            streamReady = false
                             recordStreamFailure("Stream lost — local batch on stop")
                         }
                         State.CONNECTING -> reset(reason)
@@ -694,6 +700,8 @@ class WhisperAccessibilityService : AccessibilityService() {
                     if (streamingFailed && !fallbackNotified &&
                         recordingTransport == "streaming") {
                         handler.post {
+                            // Error is logged once; no more partial WSS updates
+                            // are displayed while batch capture continues.
                             recordStreamFailure("Streaming interrupted — local batch on stop")
                         }
                     }
