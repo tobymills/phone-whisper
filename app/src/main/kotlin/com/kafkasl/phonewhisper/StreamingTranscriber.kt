@@ -41,6 +41,9 @@ class StreamingTranscriber(
 
     companion object {
         private const val TAG = "PhoneWhisperStream"
+        // Plain JVM unit tests do not have a real android.util.Log implementation.
+        private fun info(message: String) { runCatching { Log.i(TAG, message) } }
+        private fun warn(message: String) { runCatching { Log.w(TAG, message) } }
         private const val MAX_QUEUED_AUDIO_BYTES = 2L * 1024 * 1024
     }
 
@@ -56,10 +59,10 @@ class StreamingTranscriber(
         } catch (_: IllegalArgumentException) {
             return false
         }
-        Log.i(TAG, "session=$sessionId connecting")
+        info("session=$sessionId connecting")
         socket = http.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.i(TAG, "session=$sessionId socket_open")
+                info("session=$sessionId socket_open")
                 val ok = webSocket.send(
                     """{"type":"start","version":1,"sample_rate":16000,"channels":1,"encoding":"pcm_s16le"}"""
                 )
@@ -79,7 +82,7 @@ class StreamingTranscriber(
                     when (message) {
                         is StreamingTranscript.Event.Ready -> {
                             if (ready.compareAndSet(false, true)) {
-                                Log.i(TAG, "session=$sessionId ready")
+                                info("session=$sessionId ready")
                                 listener.onReady()
                             }
                         }
@@ -87,7 +90,7 @@ class StreamingTranscriber(
                             listener.onUpdate(message.stable, message.unstable)
                         is StreamingTranscript.Event.Final -> {
                             if (terminal.compareAndSet(false, true)) {
-                                Log.i(TAG, "session=$sessionId final chars=${message.text.length} bytes=$bytesSent frames=$framesSent")
+                                info("session=$sessionId final chars=${message.text.length} bytes=$bytesSent frames=$framesSent")
                                 listener.onFinal(message.text)
                                 webSocket.close(1000, "final received")
                             }
@@ -100,7 +103,7 @@ class StreamingTranscriber(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.w(TAG, "session=$sessionId socket_failure http=${response?.code ?: 0} cause=${t.javaClass.simpleName}")
+                warn("session=$sessionId socket_failure http=${response?.code ?: 0} cause=${t.javaClass.simpleName}")
                 fail(when (response?.code) {
                     401 -> "Streaming authentication rejected"
                     403, 429, 503 -> "Streaming session busy or refused"
@@ -109,7 +112,7 @@ class StreamingTranscriber(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                Log.i(TAG, "session=$sessionId closed code=$code")
+                info("session=$sessionId closed code=$code")
                 if (!terminal.get()) fail("Streaming connection closed before final transcript")
             }
         })
@@ -124,7 +127,7 @@ class StreamingTranscriber(
         if (sent) {
             bytesSent += size
             framesSent++
-            if (framesSent == 1L) Log.i(TAG, "session=$sessionId first_audio_frame bytes=$size")
+            if (framesSent == 1L) info("session=$sessionId first_audio_frame bytes=$size")
         }
         return sent
     }
@@ -132,13 +135,13 @@ class StreamingTranscriber(
     fun stop(): Boolean {
         if (!ready.get() || terminal.get() || !stopped.compareAndSet(false, true))
             return false
-        Log.i(TAG, "session=$sessionId stop bytes=$bytesSent frames=$framesSent")
+        info("session=$sessionId stop bytes=$bytesSent frames=$framesSent")
         return socket?.send("""{"type":"stop"}""") == true
     }
 
     fun cancel() {
         if (terminal.compareAndSet(false, true)) {
-            Log.i(TAG, "session=$sessionId cancel")
+            info("session=$sessionId cancel")
             socket?.send("""{"type":"cancel"}""")
             socket?.close(1000, "cancelled")
         }
@@ -146,7 +149,7 @@ class StreamingTranscriber(
 
     private fun fail(reason: String) {
         if (terminal.compareAndSet(false, true)) {
-            Log.w(TAG, "session=$sessionId failed reason=$reason bytes=$bytesSent frames=$framesSent")
+            warn("session=$sessionId failed reason=$reason bytes=$bytesSent frames=$framesSent")
             socket?.cancel()
             listener.onError(reason)
         }
