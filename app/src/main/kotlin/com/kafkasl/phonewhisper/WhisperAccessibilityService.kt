@@ -62,7 +62,8 @@ class WhisperAccessibilityService : AccessibilityService() {
     private var feedbackLayoutParams: WindowManager.LayoutParams? = null
     private var docked = false
     private var diagnosticId = ""
-    private var fallbackNotified = false
+    @Volatile private var fallbackNotified = false
+    private var transcriptSource = "legacy"
     private val dockIdle = Runnable { dockAtEdge() }
     private var audioRecord: AudioRecord? = null
     private var pcmStream: ByteArrayOutputStream? = null
@@ -195,8 +196,9 @@ class WhisperAccessibilityService : AccessibilityService() {
         handler.removeCallbacks(finalTimeout)
         handler.removeCallbacks(handshakeTimeout)
         handler.removeCallbacks(dockIdle)
+        if (state != State.IDLE) recordStage("cancelled",
+            if (recordingTransport == "local_batch_fallback") "batch_fallback" else recordingTransport)
         state = State.IDLE
-        recordStage("cancelled")
         try { audioRecord?.stop() } catch (_: Exception) {}
         audioRecord?.release()
         audioRecord = null
@@ -464,6 +466,8 @@ class WhisperAccessibilityService : AccessibilityService() {
         handler.removeCallbacks(handshakeTimeout)
         streamingSession?.cancel()
         streamingSession = null
+        recordStage("cancelled",
+            if (recordingTransport == "local_batch_fallback") "batch_fallback" else recordingTransport)
         state = State.IDLE
         try { audioRecord?.stop() } catch (_: Exception) {}
         try { recordingThread?.join(800) } catch (_: InterruptedException) {
@@ -497,6 +501,7 @@ class WhisperAccessibilityService : AccessibilityService() {
             return
         }
         recordingTransport = prefs().getString("transcription_mode", "legacy") ?: "legacy"
+        transcriptSource = recordingTransport
         recordStage("started")
         handler.removeCallbacks(dockIdle)
         undock()
@@ -575,6 +580,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                         || finalInserted) return@post
                     finalInserted = true
                     handler.removeCallbacks(finalTimeout)
+                    transcriptSource = "streaming"
                     recordStage("stream_success")
                     if (text.isBlank()) showFeedback("No speech detected", 2000)
                     else injectTextToOriginalFocus(text)
@@ -683,7 +689,8 @@ class WhisperAccessibilityService : AccessibilityService() {
                         handler.post { if (state == State.RECORDING) stopAndTranscribe() }
                         break
                     }
-                    if (streamingFailed && recordingTransport == "streaming") {
+                    if (streamingFailed && !fallbackNotified &&
+                        recordingTransport == "streaming") {
                         handler.post {
                             recordStreamFailure("Streaming interrupted — local batch on stop")
                         }
@@ -761,13 +768,14 @@ class WhisperAccessibilityService : AccessibilityService() {
                     || finalInserted) return@post
                 if (!result.text.isNullOrBlank()) {
                     finalInserted = true
-                    recordStage("batch_success",
-                        if (recordingTransport == "local_batch_fallback") "streaming" else "local_batch")
+                    transcriptSource = if (recordingTransport == "local_batch_fallback")
+                        "batch_fallback" else "local_batch"
+                    recordStage("batch_success", transcriptSource)
                     injectTextToOriginalFocus(result.text)
                     completeSession()
                 } else {
                     recordStage("batch_failed",
-                        if (recordingTransport == "local_batch_fallback") "streaming" else "local_batch")
+                        if (recordingTransport == "local_batch_fallback") "batch_fallback" else "local_batch")
                     reset(result.error ?: "Local batch transcription failed")
                 }
             }
@@ -782,7 +790,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         handler.removeCallbacks(finalTimeout)
         if (recordingTransport == "local_batch_fallback") return
         recordingTransport = "local_batch_fallback"
-        recordStage("batch_fallback", "streaming")
+        recordStage("batch_fallback", "batch_fallback")
         val pcm = pendingPcm
         if (pcm == null) {
             reset(reason)
@@ -863,8 +871,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         } finally {
             nodes.forEach { it.recycle() }
         }
-        recordStage(if (injected) "injected" else "clipboard",
-            if (recordingTransport == "local_batch_fallback") "streaming" else recordingTransport)
+        recordStage(if (injected) "injected" else "clipboard", transcriptSource)
         showFeedback(if (injected) "Inserted" else "Focus changed — copied to clipboard", 3000)
     }
 
@@ -977,7 +984,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         pendingPcm = null
         toast(msg)
         recordStage("failed", if (recordingTransport == "local_batch_fallback")
-            "streaming" else recordingTransport)
+            "batch_fallback" else recordingTransport)
         state = State.IDLE
         setBusy(false)
         setAppearance(COLOR_IDLE)
