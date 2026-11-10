@@ -31,6 +31,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var audioRowSub: TextView
     private lateinit var accRowSub: TextView
     private lateinit var keyRowSub: TextView
+    private lateinit var overlayVisibilitySub: TextView
+    private lateinit var overlayRecessSub: TextView
+    private lateinit var lastSessionSub: TextView
     private lateinit var transportRowSub: TextView
     private lateinit var streamUrlSub: TextView
     private lateinit var batchUrlSub: TextView
@@ -137,6 +140,42 @@ class MainActivity : AppCompatActivity() {
         }
         streamTokenSub = streamTokenRow.findViewWithTag("subtitle")
         root.addView(streamTokenRow)
+
+        // Accessibility overlay options are independent of transcription mode.
+        val visibilityRow = settingsRow("Microphone button", "Only when typing") {
+            val options = arrayOf("Only when typing", "Always")
+            val current = prefs().getString("overlay_visibility", "focused")
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Show microphone button")
+                .setSingleChoiceItems(options, if (current == "always") 1 else 0) { dialog, index ->
+                    prefs().edit().putString("overlay_visibility",
+                        if (index == 0) "focused" else "always").apply()
+                    WhisperAccessibilityService.instance?.updateOverlayVisibility()
+                    dialog.dismiss()
+                    refresh()
+                }.setNegativeButton("Cancel", null).show()
+        }
+        overlayVisibilitySub = visibilityRow.findViewWithTag("subtitle")
+        root.addView(visibilityRow)
+
+        val recessRow = settingsRow("Recess button when idle", "On") {
+            val options = arrayOf("On", "Off")
+            val enabled = prefs().getBoolean("overlay_recess", true)
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Recess button when idle")
+                .setSingleChoiceItems(options, if (enabled) 0 else 1) { dialog, index ->
+                    prefs().edit().putBoolean("overlay_recess", index == 0).apply()
+                    WhisperAccessibilityService.instance?.updateOverlayVisibility()
+                    dialog.dismiss()
+                    refresh()
+                }.setNegativeButton("Cancel", null).show()
+        }
+        overlayRecessSub = recessRow.findViewWithTag("subtitle")
+        root.addView(recessRow)
+
+        val sessionRow = settingsRow("Last dictation", "No recent session")
+        lastSessionSub = sessionRow.findViewWithTag("subtitle")
+        root.addView(sessionRow)
 
         // Local Models section
         modelContainer = vertical(0)
@@ -357,6 +396,13 @@ class MainActivity : AppCompatActivity() {
         val batchUrl = prefs().getString("batch_url",
             "https://stt.millsho.me/v1/audio/transcriptions").orEmpty()
         val streamToken = LocalSecrets.read(this)
+        overlayVisibilitySub.text = if (
+            prefs().getString("overlay_visibility", "focused") == "always"
+        ) "Always" else "Only when typing"
+        overlayRecessSub.text = if (prefs().getBoolean("overlay_recess", true)) "On" else "Off"
+        lastSessionSub.text = prefs().getString(
+            SessionDiagnostics.KEY, "No recent session"
+        ) ?: "No recent session"
         transportRowSub.text = when (mode) {
             "streaming" -> "AIOS live streaming + local batch fallback"
             "local_batch" -> "AIOS local batch transcription"
