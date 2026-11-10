@@ -899,9 +899,11 @@ class WhisperAccessibilityService : AccessibilityService() {
                 Log.e(TAG, "Local transcription failed", e)
                 handler.post {
                     toast("Local error: ${e.message}")
+                    recordStage("failed", "legacy")
                     state = State.IDLE
                     setBusy(false)
                     setAppearance(COLOR_IDLE)
+                    updateOverlayVisibility()
                 }
             }
         }
@@ -918,9 +920,11 @@ class WhisperAccessibilityService : AccessibilityService() {
             } else {
                 handler.post {
                     toast("Error: ${result.error ?: "empty transcript"}")
+                    recordStage("failed", "legacy")
                     state = State.IDLE
                     setBusy(false)
                     setAppearance(COLOR_IDLE)
+                    updateOverlayVisibility()
                 }
             }
         }
@@ -930,9 +934,11 @@ class WhisperAccessibilityService : AccessibilityService() {
         if (text.isNullOrBlank()) {
             handler.post {
                 toast("No speech detected")
+                recordStage("failed", "legacy")
                 state = State.IDLE
                 setBusy(false)
                 setAppearance(COLOR_IDLE)
+                updateOverlayVisibility()
             }
             return
         }
@@ -945,9 +951,11 @@ class WhisperAccessibilityService : AccessibilityService() {
                 handler.post {
                     toast("Post-processing needs API key. Using raw text.")
                     injectText(text)
+                    recordStage("failed", "legacy")
                     state = State.IDLE
                     setBusy(false)
                     setAppearance(COLOR_IDLE)
+                    updateOverlayVisibility()
                 }
                 return
             }
@@ -961,17 +969,21 @@ class WhisperAccessibilityService : AccessibilityService() {
                     } else {
                         injectText(text, feedback = "Cleanup failed — raw copied to clipboard", feedbackDurationMs = 3000)
                     }
+                    recordStage("failed", "legacy")
                     state = State.IDLE
                     setBusy(false)
                     setAppearance(COLOR_IDLE)
+                    updateOverlayVisibility()
                 }
             }
         } else {
             handler.post {
                 injectText(text)
+                recordStage("legacy_success", "legacy")
                 state = State.IDLE
                 setBusy(false)
                 setAppearance(COLOR_IDLE)
+                updateOverlayVisibility()
             }
         }
     }
