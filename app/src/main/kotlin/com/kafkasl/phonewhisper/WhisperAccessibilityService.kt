@@ -25,6 +25,8 @@ import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import android.text.TextUtils
+import java.util.UUID
 import java.io.ByteArrayOutputStream
 import kotlin.concurrent.thread
 import kotlin.math.abs
@@ -58,6 +60,10 @@ class WhisperAccessibilityService : AccessibilityService() {
     private var feedbackView: TextView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private var feedbackLayoutParams: WindowManager.LayoutParams? = null
+    private var docked = false
+    private var diagnosticId = ""
+    private var fallbackNotified = false
+    private val dockIdle = Runnable { dockAtEdge() }
     private var audioRecord: AudioRecord? = null
     private var pcmStream: ByteArrayOutputStream? = null
     private val pcmLock = Any()
@@ -108,11 +114,78 @@ class WhisperAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         instance = this
         showOverlay()
+        updateOverlayVisibility()
         // Try to load local model in background
         thread { initLocalModel() }
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // TYPE_VIEW_FOCUSED events are configured in accessibility_service_config.xml.
+        if (event?.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
+            updateOverlayVisibility()
+        }
+    }
+
+    /** Show only when an editable, non-password input owns focus, unless overridden. */
+    fun updateOverlayVisibility() {
+        handler.post {
+            val shouldShow = state != State.IDLE ||
+                prefs().getString("overlay_visibility", "focused") == "always" ||
+                hasEditableFocus()
+            overlayView?.visibility = if (shouldShow) View.VISIBLE else View.GONE
+            if (shouldShow && state == State.IDLE) scheduleIdleDock()
+            else handler.removeCallbacks(dockIdle)
+        }
+    }
+
+    private fun hasEditableFocus(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        return try {
+            focused?.isEditable == true && focused.isFocused && !focused.isPassword
+        } finally {
+            focused?.recycle()
+        }
+    }
+
+    /** Recess only an idle button; keep a usable edge handle for a tap or drag. */
+    private fun dockAtEdge() {
+        if (state != State.IDLE || !prefs().getBoolean("overlay_recess", true) ||
+            overlayView?.visibility != View.VISIBLE || docked) return
+        val params = layoutParams ?: return
+        val view = overlayView ?: return
+        val ringSize = (RING_DP * dp).toInt()
+        val visible = (28 * dp).toInt()
+        val margin = (MARGIN_DP * dp).toInt()
+        val rightSide = params.x + ringSize / 2 > screenW / 2
+        params.x = if (rightSide) screenW - visible else -(ringSize - visible)
+        params.y = params.y.coerceIn(margin, (screenH - ringSize - margin).coerceAtLeast(margin))
+        (getSystemService(WINDOW_SERVICE) as WindowManager).updateViewLayout(view, params)
+        docked = true
+    }
+
+    private fun undock() {
+        if (!docked) return
+        val params = layoutParams ?: return
+        val view = overlayView ?: return
+        val ringSize = (RING_DP * dp).toInt()
+        val margin = (MARGIN_DP * dp).toInt()
+        params.x = if (params.x + ringSize / 2 >= screenW / 2)
+            screenW - ringSize - margin else margin
+        (getSystemService(WINDOW_SERVICE) as WindowManager).updateViewLayout(view, params)
+        docked = false
+    }
+
+    private fun scheduleIdleDock() {
+        handler.removeCallbacks(dockIdle)
+        if (state == State.IDLE && prefs().getBoolean("overlay_recess", true))
+            handler.postDelayed(dockIdle, 2500)
+        else undock()
+    }
+
+    private fun recordStage(stage: String, source: String = recordingTransport) {
+        if (diagnosticId.isNotBlank()) SessionDiagnostics.record(this, diagnosticId, stage, source)
+    }
     override fun onInterrupt() { handler.post { if (state != State.IDLE) cancelDictation() } }
 
     override fun onDestroy() {
@@ -121,7 +194,9 @@ class WhisperAccessibilityService : AccessibilityService() {
         streamingSession = null
         handler.removeCallbacks(finalTimeout)
         handler.removeCallbacks(handshakeTimeout)
+        handler.removeCallbacks(dockIdle)
         state = State.IDLE
+        recordStage("cancelled")
         try { audioRecord?.stop() } catch (_: Exception) {}
         audioRecord?.release()
         audioRecord = null
@@ -197,6 +272,8 @@ class WhisperAccessibilityService : AccessibilityService() {
         overlay.setOnTouchListener { v, ev ->
             when (ev.action) {
                 MotionEvent.ACTION_DOWN -> {
+                    handler.removeCallbacks(dockIdle)
+                    undock()
                     startX = params.x; startY = params.y
                     touchX = ev.rawX; touchY = ev.rawY
                     touchDownAt = ev.eventTime
@@ -231,6 +308,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                             onTap()
                         }
                     } else {
+                        docked = false
                         params.x = if (params.x + ringSize / 2 > screenW / 2)
                             screenW - ringSize - margin else margin
                         wm.updateViewLayout(v, params)
@@ -238,6 +316,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                             positionFeedback(it, params)
                             wm.updateViewLayout(feedbackView, it)
                         }
+                        scheduleIdleDock()
                     }
                     true
                 }
@@ -247,6 +326,9 @@ class WhisperAccessibilityService : AccessibilityService() {
 
         val feedback = TextView(this).apply {
             textSize = 13f
+            maxLines = 3
+            ellipsize = TextUtils.TruncateAt.START
+            gravity = Gravity.CENTER
             setTextColor(0xFFFFFFFF.toInt())
             setPadding((12 * dp).toInt(), (8 * dp).toInt(), (12 * dp).toInt(), (8 * dp).toInt())
             background = pill(COLOR_FEEDBACK_BG)
@@ -255,7 +337,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
 
         val feedbackParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            screenW - margin * 2,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
@@ -316,9 +398,9 @@ class WhisperAccessibilityService : AccessibilityService() {
         bubbleParams: WindowManager.LayoutParams
     ) {
         val margin = (MARGIN_DP * dp).toInt()
-        val offset = (FEEDBACK_OFFSET_DP * dp).toInt()
-        feedbackParams.x = maxOf(margin, bubbleParams.x - offset)
-        feedbackParams.y = maxOf(margin, bubbleParams.y - margin)
+        // Feedback is touch-through at the top, never adjacent to the stop button.
+        feedbackParams.x = margin
+        feedbackParams.y = (64 * dp).toInt()
     }
 
     private fun showFeedback(text: String, durationMs: Long = 2000) {
@@ -396,6 +478,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         setBusy(false)
         setAppearance(COLOR_IDLE)
         showFeedback("Dictation cancelled", 1600)
+        updateOverlayVisibility()
     }
 
     private fun startRecording() {
@@ -404,6 +487,8 @@ class WhisperAccessibilityService : AccessibilityService() {
             toast("Grant audio permission in Phone Whisper app"); return
         }
         sessionId++
+        diagnosticId = UUID.randomUUID().toString().replace("-", "")
+        fallbackNotified = false
         finalInserted = false
         cancelArmedUntil = 0L
         startingFocus = captureFocus()
@@ -412,8 +497,20 @@ class WhisperAccessibilityService : AccessibilityService() {
             return
         }
         recordingTransport = prefs().getString("transcription_mode", "legacy") ?: "legacy"
+        recordStage("started")
+        handler.removeCallbacks(dockIdle)
+        undock()
+        updateOverlayVisibility()
         if (recordingTransport == "streaming") startStreaming()
         else startCapture()
+    }
+
+    /** Surface one warning per session; sendAudio failure may be recoverable via batch. */
+    private fun recordStreamFailure(message: String) {
+        if (fallbackNotified) return
+        fallbackNotified = true
+        recordStage("stream_failed", "streaming")
+        showFeedback(message, 3500)
     }
 
     /** Open one WSS session while buffering the microphone from the first tap. */
@@ -455,8 +552,9 @@ class WhisperAccessibilityService : AccessibilityService() {
                         if (!streamingFailed) streamReady = true
                     }
                     if (streamingFailed) {
-                        showFeedback("Streaming interrupted — local batch on stop", 3500)
+                        recordStreamFailure("Streaming interrupted — local batch on stop")
                     } else {
+                        recordStage("connected")
                         showFeedback("AIOS streaming connected", 1200)
                     }
                 }
@@ -477,6 +575,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                         || finalInserted) return@post
                     finalInserted = true
                     handler.removeCallbacks(finalTimeout)
+                    recordStage("stream_success")
                     if (text.isBlank()) showFeedback("No speech detected", 2000)
                     else injectTextToOriginalFocus(text)
                     completeSession()
@@ -489,7 +588,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                     when (state) {
                         State.RECORDING -> {
                             streamingFailed = true
-                            showFeedback("Stream lost — local batch on stop", 3000)
+                            recordStreamFailure("Stream lost — local batch on stop")
                         }
                         State.CONNECTING -> reset(reason)
                         State.TRANSCRIBING -> {
@@ -500,7 +599,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                     }
                 }
             }
-        })
+        }, sessionId = diagnosticId)
         streamingSession = stream
         if (!stream.connect(url, token)) {
             streamingSession = null
@@ -555,6 +654,7 @@ class WhisperAccessibilityService : AccessibilityService() {
             return
         }
         state = State.RECORDING
+        recordStage("capturing")
         setBusy(false)
         setAppearance(COLOR_RECORDING)
         startPulse()
@@ -585,7 +685,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                     }
                     if (streamingFailed && recordingTransport == "streaming") {
                         handler.post {
-                            showFeedback("Streaming interrupted — local batch on stop", 3000)
+                            recordStreamFailure("Streaming interrupted — local batch on stop")
                         }
                     }
                 } else if (n < 0) {
@@ -600,6 +700,7 @@ class WhisperAccessibilityService : AccessibilityService() {
     /** Stop and join capture before sending stop or the complete local batch fallback. */
     private fun stopAndTranscribe() {
         state = State.TRANSCRIBING
+        recordStage("finalising")
         stopPulse()
         setAppearance(COLOR_BUSY)
         setBusy(true)
@@ -660,9 +761,13 @@ class WhisperAccessibilityService : AccessibilityService() {
                     || finalInserted) return@post
                 if (!result.text.isNullOrBlank()) {
                     finalInserted = true
+                    recordStage("batch_success",
+                        if (recordingTransport == "local_batch_fallback") "streaming" else "local_batch")
                     injectTextToOriginalFocus(result.text)
                     completeSession()
                 } else {
+                    recordStage("batch_failed",
+                        if (recordingTransport == "local_batch_fallback") "streaming" else "local_batch")
                     reset(result.error ?: "Local batch transcription failed")
                 }
             }
@@ -677,6 +782,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         handler.removeCallbacks(finalTimeout)
         if (recordingTransport == "local_batch_fallback") return
         recordingTransport = "local_batch_fallback"
+        recordStage("batch_fallback", "streaming")
         val pcm = pendingPcm
         if (pcm == null) {
             reset(reason)
@@ -697,6 +803,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         state = State.IDLE
         setBusy(false)
         setAppearance(COLOR_IDLE)
+        updateOverlayVisibility()
     }
 
     /** Snapshot a focused editor's identity without retaining stale accessibility nodes. */
@@ -756,6 +863,8 @@ class WhisperAccessibilityService : AccessibilityService() {
         } finally {
             nodes.forEach { it.recycle() }
         }
+        recordStage(if (injected) "injected" else "clipboard",
+            if (recordingTransport == "local_batch_fallback") "streaming" else recordingTransport)
         showFeedback(if (injected) "Inserted" else "Focus changed — copied to clipboard", 3000)
     }
 
@@ -867,9 +976,12 @@ class WhisperAccessibilityService : AccessibilityService() {
         streamingSession = null
         pendingPcm = null
         toast(msg)
+        recordStage("failed", if (recordingTransport == "local_batch_fallback")
+            "streaming" else recordingTransport)
         state = State.IDLE
         setBusy(false)
         setAppearance(COLOR_IDLE)
+        updateOverlayVisibility()
     }
 
     /**
