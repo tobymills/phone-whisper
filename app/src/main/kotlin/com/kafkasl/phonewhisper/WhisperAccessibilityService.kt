@@ -42,7 +42,6 @@ class WhisperAccessibilityService : AccessibilityService() {
         private const val MARGIN_DP = 8
         private const val TAP_THRESHOLD_DP = 10
         private const val RING_DP = 56
-        private const val FEEDBACK_OFFSET_DP = 64
 
         private const val COLOR_IDLE = 0xDD1C1C1E.toInt()
         private const val COLOR_RECORDING = 0xDDEF4444.toInt()
@@ -133,9 +132,10 @@ class WhisperAccessibilityService : AccessibilityService() {
     /** Show only when an editable, non-password input owns focus, unless overridden. */
     fun updateOverlayVisibility() {
         handler.post {
-            val shouldShow = state != State.IDLE ||
-                prefs().getString("overlay_visibility", "focused") == "always" ||
-                hasEditableFocus()
+            val shouldShow = OverlayPolicy.visible(
+                prefs().getString("overlay_visibility", "focused") ?: "focused",
+                state != State.IDLE, hasEditableFocus()
+            )
             overlayView?.visibility = if (shouldShow) View.VISIBLE else View.GONE
             if (shouldShow && state == State.IDLE) scheduleIdleDock()
             else handler.removeCallbacks(dockIdle)
@@ -162,7 +162,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         val visible = (28 * dp).toInt()
         val margin = (MARGIN_DP * dp).toInt()
         val rightSide = params.x + ringSize / 2 > screenW / 2
-        params.x = if (rightSide) screenW - visible else -(ringSize - visible)
+        params.x = OverlayPolicy.recessedX(rightSide, screenW, ringSize, visible)
         params.y = params.y.coerceIn(margin, (screenH - ringSize - margin).coerceAtLeast(margin))
         (getSystemService(WINDOW_SERVICE) as WindowManager).updateViewLayout(view, params)
         docked = true
@@ -174,8 +174,9 @@ class WhisperAccessibilityService : AccessibilityService() {
         val view = overlayView ?: return
         val ringSize = (RING_DP * dp).toInt()
         val margin = (MARGIN_DP * dp).toInt()
-        params.x = if (params.x + ringSize / 2 >= screenW / 2)
-            screenW - ringSize - margin else margin
+        params.x = OverlayPolicy.snappedX(
+            params.x + ringSize / 2 >= screenW / 2, screenW, ringSize, margin
+        )
         (getSystemService(WINDOW_SERVICE) as WindowManager).updateViewLayout(view, params)
         docked = false
     }
@@ -289,7 +290,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                     params.y = startY + (ev.rawY - touchY).toInt()
                     wm.updateViewLayout(v, params)
                     feedbackLayoutParams?.let {
-                        positionFeedback(it, params)
+                        positionFeedback(it)
                         wm.updateViewLayout(feedbackView, it)
                     }
                     true
@@ -314,11 +315,13 @@ class WhisperAccessibilityService : AccessibilityService() {
                         }
                     } else {
                         docked = false
-                        params.x = if (params.x + ringSize / 2 > screenW / 2)
-                            screenW - ringSize - margin else margin
+                        params.x = OverlayPolicy.snappedX(
+                            params.x + ringSize / 2 > screenW / 2,
+                            screenW, ringSize, margin
+                        )
                         wm.updateViewLayout(v, params)
                         feedbackLayoutParams?.let {
-                            positionFeedback(it, params)
+                            positionFeedback(it)
                             wm.updateViewLayout(feedbackView, it)
                         }
                         scheduleIdleDock()
@@ -350,7 +353,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
         }
-        positionFeedback(feedbackParams, params)
+        positionFeedback(feedbackParams)
 
         wm.addView(overlay, params)
         wm.addView(feedback, feedbackParams)
@@ -398,10 +401,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun positionFeedback(
-        feedbackParams: WindowManager.LayoutParams,
-        bubbleParams: WindowManager.LayoutParams
-    ) {
+    private fun positionFeedback(feedbackParams: WindowManager.LayoutParams) {
         val margin = (MARGIN_DP * dp).toInt()
         // Feedback is touch-through at the top, never adjacent to the stop button.
         feedbackParams.x = margin
@@ -411,12 +411,11 @@ class WhisperAccessibilityService : AccessibilityService() {
     private fun showFeedback(text: String, durationMs: Long = 2000) {
         handler.post {
             val view = feedbackView ?: return@post
-            val bubbleParams = layoutParams ?: return@post
             val feedbackParams = feedbackLayoutParams ?: return@post
             val wm = getSystemService(WINDOW_SERVICE) as WindowManager
 
             view.text = text
-            positionFeedback(feedbackParams, bubbleParams)
+            positionFeedback(feedbackParams)
             wm.updateViewLayout(view, feedbackParams)
 
             handler.removeCallbacks(hideFeedback)
