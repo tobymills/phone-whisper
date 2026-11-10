@@ -48,4 +48,12 @@ class StreamingTranscriptTest {
         assertEquals(StreamingTranscript.Event.Final(""),
             state.receive("""{"type":"final","text":""}"""))
     }
+
+    @Test fun `untrusted server error code is not exposed in diagnostics`() {
+        val state = StreamingTranscript()
+        assertEquals(StreamingTranscript.Event.Error("audio_rate_limit"),
+            state.receive("""{"type":"error","code":"audio_rate_limit"}"""))
+        assertEquals(StreamingTranscript.Event.Error("streaming_error"),
+            state.receive("""{"type":"error","code":"Bearer secret\\nprivate speech"}"""))
+    }
 }
