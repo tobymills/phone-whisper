@@ -121,9 +121,12 @@ class WhisperAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // TYPE_VIEW_FOCUSED events are configured in accessibility_service_config.xml.
-        if (event?.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
-            updateOverlayVisibility()
+        // Focus and window changes both affect whether an editor is active.
+        // These events are declared in accessibility_service_config.xml.
+        when (event?.eventType) {
+            AccessibilityEvent.TYPE_VIEW_FOCUSED,
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+            AccessibilityEvent.TYPE_WINDOWS_CHANGED -> updateOverlayVisibility()
         }
     }
 
