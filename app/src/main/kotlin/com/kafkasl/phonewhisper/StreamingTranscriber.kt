@@ -21,7 +21,8 @@ class StreamingTranscriber(
     private val listener: Listener,
     private val http: OkHttpClient = OkHttpClient.Builder()
         .pingInterval(15, TimeUnit.SECONDS)
-        .build()
+        .build(),
+    val sessionId: String = UUID.randomUUID().toString().replace("-", "")
 ) {
     interface Listener {
         fun onReady()
@@ -35,7 +36,6 @@ class StreamingTranscriber(
     private val stopped = AtomicBoolean(false)
     private val transcript = StreamingTranscript()
     private var socket: WebSocket? = null
-    val sessionId: String = UUID.randomUUID().toString().replace("-", "")
     private var bytesSent = 0L
     private var framesSent = 0L
 
