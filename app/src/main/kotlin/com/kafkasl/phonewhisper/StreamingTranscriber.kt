@@ -196,7 +196,13 @@ class StreamingTranscript {
                 finished = true
                 Event.Final(value)
             }
-            "error" -> Event.Error(msg.optString("code", "streaming_error"))
+            "error" -> {
+                // Only fixed protocol identifiers may reach diagnostics or UI.
+                // Untrusted server strings must never enter Logcat verbatim.
+                val code = msg.optString("code", "streaming_error")
+                Event.Error(if (code.matches(Regex("[a-z0-9_]{1,64}")))
+                    code else "streaming_error")
+            }
             else -> error("Unknown streaming event")
         }
     }
