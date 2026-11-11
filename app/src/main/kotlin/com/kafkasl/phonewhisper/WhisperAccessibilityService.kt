@@ -347,7 +347,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val moved = abs(ev.rawX - touchX) + abs(ev.rawY - touchY)
-                    if (!holdStarted && moved > TAP_THRESHOLD_DP * dp) {
+                    if (DictationGesturePolicy.shouldDrag(moved, TAP_THRESHOLD_DP * dp, holdStarted)) {
                         dragging = true
                         handler.removeCallbacks(longHold)
                     }
@@ -378,7 +378,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                             (state == State.RECORDING || state == State.CONNECTING)) {
                             stopAndTranscribe()
                         }
-                    } else if (ev.eventTime - touchDownAt >= 350L &&
+                    } else if (DictationGesturePolicy.isHold(ev.eventTime - touchDownAt, 350L) &&
                         state == State.IDLE) {
                         // Handle a hold that completed before its scheduled callback.
                         startRecording(cleanUp = false)
