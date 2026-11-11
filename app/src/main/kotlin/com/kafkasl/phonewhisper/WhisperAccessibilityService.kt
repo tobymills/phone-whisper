@@ -69,6 +69,21 @@ class WhisperAccessibilityService : AccessibilityService() {
     private val pcmLock = Any()
     @Volatile private var streamReady = false
     private var cancelArmedUntil = 0L
+    private var cleanUpThisSession = false
+    private var holdStarted = false
+    private var dragging = false
+    private val longHold = Runnable {
+        if (!dragging && state == State.IDLE) {
+            holdStarted = true
+            startRecording(cleanUp = false)
+            if (state == State.RECORDING || state == State.CONNECTING)
+                showFeedback("Quick dictation — release to finish", 1800)
+        } else if (!dragging && state != State.IDLE) {
+            holdStarted = true
+            cancelArmedUntil = android.os.SystemClock.uptimeMillis() + 5000
+            showFeedback("Release, then hold again to discard", 3000)
+        }
+    }
     private val handshakeTimeout = Runnable {
         if (state == State.RECORDING && recordingTransport == "streaming"
             && !streamReady && !streamingFailed) {
@@ -242,6 +257,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         handler.removeCallbacks(finalTimeout)
         handler.removeCallbacks(handshakeTimeout)
         handler.removeCallbacks(dockIdle)
+        handler.removeCallbacks(longHold)
         handler.removeCallbacks(refreshOverlay)
         if (state != State.IDLE) recordStage("cancelled",
             if (recordingTransport == "local_batch_fallback") "batch_fallback" else recordingTransport)
@@ -326,49 +342,64 @@ class WhisperAccessibilityService : AccessibilityService() {
                     startX = params.x; startY = params.y
                     touchX = ev.rawX; touchY = ev.rawY
                     touchDownAt = ev.eventTime
+                    holdStarted = false
+                    dragging = false
+                    if (state == State.IDLE) handler.postDelayed(longHold, 350)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    params.x = startX + (ev.rawX - touchX).toInt()
-                    params.y = startY + (ev.rawY - touchY).toInt()
-                    wm.updateViewLayout(v, params)
-                    feedbackLayoutParams?.let {
-                        positionFeedback(it)
-                        wm.updateViewLayout(feedbackView, it)
+                    val moved = abs(ev.rawX - touchX) + abs(ev.rawY - touchY)
+                    if (moved > TAP_THRESHOLD_DP * dp) {
+                        dragging = true
+                        handler.removeCallbacks(longHold)
+                    }
+                    if (dragging) {
+                        params.x = startX + (ev.rawX - touchX).toInt()
+                        params.y = startY + (ev.rawY - touchY).toInt()
+                        wm.updateViewLayout(v, params)
+                        feedbackLayoutParams?.let {
+                            positionFeedback(it)
+                            feedbackView?.let { view -> wm.updateViewLayout(view, it) }
+                        }
                     }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    val moved = abs(ev.rawX - touchX) + abs(ev.rawY - touchY)
-                    if (moved < TAP_THRESHOLD_DP * dp) {
-                        if (ev.eventTime - touchDownAt >= 1500
-                            && (state == State.CONNECTING || state == State.RECORDING
-                                || (state == State.TRANSCRIBING &&
-                                    recordingTransport != "legacy"))) {
-                            val now = android.os.SystemClock.uptimeMillis()
-                            if (now < cancelArmedUntil) {
-                                cancelDictation()
-                            } else {
-                                cancelArmedUntil = now + 5000
-                                showFeedback("Hold again to discard dictation", 4000)
-                            }
-                        } else {
-                            cancelArmedUntil = 0L
-                            onTap()
-                        }
-                    } else {
+                    handler.removeCallbacks(longHold)
+                    val held = holdStarted
+                    if (dragging) {
                         docked = false
                         params.x = OverlayPolicy.snappedX(
                             params.x + ringSize / 2 > screenW / 2,
                             screenW, ringSize, margin
                         )
                         wm.updateViewLayout(v, params)
-                        feedbackLayoutParams?.let {
-                            positionFeedback(it)
-                            wm.updateViewLayout(feedbackView, it)
-                        }
                         scheduleIdleDock()
+                    } else if (held) {
+                        if (!cleanUpThisSession &&
+                            (state == State.RECORDING || state == State.CONNECTING)) {
+                            stopAndTranscribe()
+                        }
+                    } else if (ev.eventTime - touchDownAt >= 350L &&
+                        state == State.IDLE) {
+                        // Handle a hold that completed before its scheduled callback.
+                        startRecording(cleanUp = false)
+                        if (state == State.RECORDING || state == State.CONNECTING)
+                            stopAndTranscribe()
+                    } else {
+                        onTap()
                     }
+                    holdStarted = false
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    handler.removeCallbacks(longHold)
+                    if (holdStarted && !cleanUpThisSession &&
+                        (state == State.CONNECTING || state == State.RECORDING)) {
+                        cancelDictation()
+                    }
+                    holdStarted = false
+                    dragging = false
                     true
                 }
                 else -> false
@@ -489,24 +520,23 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     private fun onTap() {
         when (state) {
-            State.IDLE -> startRecording()
-            State.CONNECTING -> {
-                ++sessionId
-                streamingSession?.cancel()
-                streamingSession = null
-                reset("Streaming cancelled")
+            State.IDLE -> {
+                startRecording(cleanUp = true)
+                if (state == State.RECORDING || state == State.CONNECTING)
+                    showFeedback("AI cleanup — tap again to finish", 2200)
             }
-            State.RECORDING -> stopAndTranscribe()
+            State.CONNECTING, State.RECORDING -> stopAndTranscribe()
             State.TRANSCRIBING -> {}
         }
     }
 
-    /** Long-press to cancel; no partial or final result is inserted. */
+    /** Long hold during an active tap session: confirm cancellation on the next hold. */
     private fun cancelDictation() {
         ++sessionId
         streamingFailed = true
         streamReady = false
         cancelArmedUntil = 0L
+        handler.removeCallbacks(longHold)
         handler.removeCallbacks(finalTimeout)
         handler.removeCallbacks(handshakeTimeout)
         streamingSession?.cancel()
@@ -530,12 +560,13 @@ class WhisperAccessibilityService : AccessibilityService() {
         updateOverlayVisibility()
     }
 
-    private fun startRecording() {
+    private fun startRecording(cleanUp: Boolean) {
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
             != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             toast("Grant audio permission in Phone Whisper app"); return
         }
         sessionId++
+        cleanUpThisSession = cleanUp
         diagnosticId = UUID.randomUUID().toString().replace("-", "")
         fallbackNotified = false
         finalInserted = false
@@ -628,13 +659,10 @@ class WhisperAccessibilityService : AccessibilityService() {
                 handler.post {
                     if (current != sessionId || state != State.TRANSCRIBING
                         || finalInserted) return@post
-                    finalInserted = true
                     handler.removeCallbacks(finalTimeout)
                     transcriptSource = "streaming"
                     recordStage("stream_success")
-                    if (text.isBlank()) showFeedback("No speech detected", 2000)
-                    else injectTextToOriginalFocus(text)
-                    completeSession()
+                    finishTranscript(text)
                 }
             }
 
@@ -820,12 +848,10 @@ class WhisperAccessibilityService : AccessibilityService() {
                 if (current != sessionId || state != State.TRANSCRIBING
                     || finalInserted) return@post
                 if (!result.text.isNullOrBlank()) {
-                    finalInserted = true
                     transcriptSource = if (recordingTransport == "local_batch_fallback")
                         "batch_fallback" else "local_batch"
                     recordStage("batch_success", transcriptSource)
-                    injectTextToOriginalFocus(result.text)
-                    completeSession()
+                    finishTranscript(result.text)
                 } else {
                     recordStage("batch_failed",
                         if (recordingTransport == "local_batch_fallback") "batch_fallback" else "local_batch")
@@ -981,59 +1007,51 @@ class WhisperAccessibilityService : AccessibilityService() {
     }
 
     private fun handleTranscriptionResult(text: String?) {
-        if (text.isNullOrBlank()) {
-            handler.post {
-                toast("No speech detected")
-                recordStage("failed", "legacy")
-                state = State.IDLE
-                setBusy(false)
-                setAppearance(COLOR_IDLE)
-                updateOverlayVisibility()
-            }
+        handler.post {
+            if (state != State.TRANSCRIBING || finalInserted) return@post
+            transcriptSource = "legacy"
+            finishTranscript(text.orEmpty())
+        }
+    }
+
+    /** One result per session, with optional cleanup after any STT transport. */
+    private fun finishTranscript(raw: String) {
+        if (state != State.TRANSCRIBING || finalInserted) return
+        finalInserted = true
+        if (raw.isBlank()) {
+            showFeedback("No speech detected", 2000)
+            completeSession()
             return
         }
-
-        val usePostProcessing = prefs().getBoolean("use_post_processing", false)
-        val apiKey = prefs().getString("api_key", "") ?: ""
-
-        if (usePostProcessing) {
-            if (apiKey.isBlank()) {
-                handler.post {
-                    toast("Post-processing needs API key. Using raw text.")
-                    injectText(text)
-                    recordStage("failed", "legacy")
-                    state = State.IDLE
-                    setBusy(false)
-                    setAppearance(COLOR_IDLE)
-                    updateOverlayVisibility()
-                }
-                return
-            }
-
-            val prompt = prefs().getString("post_processing_prompt", PostProcessor.DEFAULT_PROMPT) ?: PostProcessor.DEFAULT_PROMPT
-            
-            PostProcessor.process(text, prompt, apiKey) { result ->
-                handler.post {
-                    if (result.text != null && result.text.isNotBlank()) {
-                        injectText(result.text)
-                    } else {
-                        injectText(text, feedback = "Cleanup failed — raw copied to clipboard", feedbackDurationMs = 3000)
-                    }
-                    recordStage("failed", "legacy")
-                    state = State.IDLE
-                    setBusy(false)
-                    setAppearance(COLOR_IDLE)
-                    updateOverlayVisibility()
-                }
-            }
-        } else {
+        if (!cleanUpThisSession) {
+            injectTextToOriginalFocus(raw)
+            completeSession()
+            return
+        }
+        val current = sessionId
+        val apiKey = prefs().getString("api_key", "").orEmpty()
+        if (apiKey.isBlank()) {
+            recordStage("cleanup_unavailable", transcriptSource)
+            injectTextToOriginalFocus(raw)
+            showFeedback("OpenAI key missing — raw transcript used", 3500)
+            completeSession()
+            return
+        }
+        showFeedback("Cleaning up text…", 4000)
+        val prompt = prefs().getString(
+            "post_processing_prompt", PostProcessor.SIMPLE_PROMPT
+        ) ?: PostProcessor.SIMPLE_PROMPT
+        PostProcessor.process(raw, prompt, apiKey) { result ->
             handler.post {
-                injectText(text)
-                recordStage("legacy_success", "legacy")
-                state = State.IDLE
-                setBusy(false)
-                setAppearance(COLOR_IDLE)
-                updateOverlayVisibility()
+                if (current != sessionId || state != State.TRANSCRIBING) return@post
+                val cleaned = result.text?.takeIf { it.isNotBlank() }
+                recordStage(if (cleaned != null) "cleanup_success" else "cleanup_failed",
+                    transcriptSource)
+                injectTextToOriginalFocus(cleaned ?: raw)
+                if (cleaned == null) showFeedback(
+                    "AI cleanup failed — raw transcript used", 3500
+                )
+                completeSession()
             }
         }
     }

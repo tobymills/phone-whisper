@@ -184,19 +184,13 @@ class MainActivity : AppCompatActivity() {
         root.addView(modelContainer)
 
         // --- Post-Processing Section ---
-        root.addView(sectionHeader("Post-Processing"))
+        root.addView(sectionHeader("AI cleanup"))
         
-        val isPostProcessing = prefs().getBoolean("use_post_processing", false)
-        val postProcessSwitch = MaterialSwitch(this).apply {
-            isChecked = isPostProcessing
-            isClickable = false
-        }
-        val postProcessRow = settingsRow("Cleanup transcript", "Uses OpenAI Chat API to fix grammar and punctuation", postProcessSwitch) {
-            val newVal = !postProcessSwitch.isChecked
-            prefs().edit().putBoolean("use_post_processing", newVal).apply()
-            postProcessSwitch.isChecked = newVal
-            refresh()
-        }
+        val postProcessRow = settingsRow(
+            "AI cleanup (tap to dictate)",
+            "Tap microphone to start; tap again to finish and clean with OpenAI. " +
+                "Hold and release for raw transcription. Configure a prompt below."
+        )
         cleanupSettingsRow = postProcessRow
         root.addView(postProcessRow)
 
@@ -213,7 +207,7 @@ class MainActivity : AppCompatActivity() {
         // --- Settings Section ---
         root.addView(sectionHeader("Settings"))
         
-        val keyRow = settingsRow("OpenAI API Key", "Tap to set") { promptApiKey() }
+        val keyRow = settingsRow("OpenAI API key (AI cleanup / legacy API)", "Tap to set") { promptApiKey() }
         keyRowSub = keyRow.findViewWithTag("subtitle")
         apiKeySettingsRow = keyRow
         root.addView(keyRow)
@@ -387,7 +381,6 @@ class MainActivity : AppCompatActivity() {
         val audio = hasPerm(Manifest.permission.RECORD_AUDIO)
         val acc = WhisperAccessibilityService.instance != null
         val useLocal = prefs().getBoolean("use_local", true)
-        val usePostProcessing = prefs().getBoolean("use_post_processing", false)
         val hasKey = !prefs().getString("api_key", "").isNullOrBlank()
         val hasModel = LocalTranscriber.availableModels(this).isNotEmpty()
         val mode = prefs().getString("transcription_mode", "legacy") ?: "legacy"
@@ -418,11 +411,11 @@ class MainActivity : AppCompatActivity() {
 
         val legacy = mode == "legacy"
         cloudSettingsRow.visibility = if (legacy) View.VISIBLE else View.GONE
-        cleanupSettingsRow.visibility = if (legacy) View.VISIBLE else View.GONE
-        apiKeySettingsRow.visibility = if (legacy) View.VISIBLE else View.GONE
+        cleanupSettingsRow.visibility = View.VISIBLE
+        apiKeySettingsRow.visibility = View.VISIBLE
         modelContainer.visibility = if (legacy && useLocal) View.VISIBLE else View.GONE
-        promptContainer.visibility = if (legacy && usePostProcessing) View.VISIBLE else View.GONE
-        promptRow.visibility = if (legacy && usePostProcessing) View.VISIBLE else View.GONE
+        promptContainer.visibility = View.VISIBLE
+        promptRow.visibility = View.VISIBLE
 
         val apiKey = prefs().getString("api_key", "") ?: ""
         keyRowSub.text = if (apiKey.isBlank()) "Tap to set" 
