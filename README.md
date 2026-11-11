@@ -6,7 +6,7 @@
 
 Push-to-talk dictation for Android.
 
-Phone Whisper lets you speak into most apps without switching keyboards. Tap the floating button, speak, tap again, and your text is inserted into the currently focused text field when the app exposes a standard Android input field.\
+Phone Whisper lets you speak into most apps without switching keyboards. Hold the floating button for quick raw dictation, or tap to start and tap again for AI-cleaned dictation; your text is inserted into the currently focused text field when the app exposes a standard Android input field.\
 
 It supports:
 
@@ -57,8 +57,8 @@ make adb-install
 ## How it works
 
 1. A small overlay button floats on screen
-2. Tap once to start recording
-3. Tap again to stop
+2. Hold and release to record and insert raw transcription, or tap once to start AI-cleaned dictation
+3. For AI-cleaned dictation, tap again to stop and run OpenAI cleanup
 4. Audio is transcribed locally or in the cloud
 5. The text is inserted into the focused text field
 6. If insertion fails, the text is copied to the clipboard
@@ -80,7 +80,7 @@ Once setup is done, the floating button is ready.
 
 Phone Whisper uses Android Accessibility Service for one narrow reason: to insert dictated text into the currently focused text field across apps.
 
-It does **not** replace your keyboard. It does **not** run background automation. It only acts after you explicitly tap the overlay button.
+It does **not** replace your keyboard. It does **not** run background automation. It only acts after you explicitly tap or hold the overlay button.
 
 ## Privacy
 
@@ -88,7 +88,7 @@ Phone Whisper supports two modes:
 
 - **Local mode**: audio stays on-device
 - **Cloud mode**: audio is sent directly from your device to OpenAI's transcription API
-- **Optional cleanup**: transcript text is sent directly from your device to OpenAI's chat API
+- **Tap-to-clean dictation**: the final transcript is sent directly from your device to OpenAI's chat API when an API key is configured; hold-to-dictate never calls cleanup
 
 I don't run a backend for this app. In cloud mode, requests go straight from your phone to OpenAI using your own API key.
 
@@ -165,7 +165,7 @@ Personal project. Do whatever you want with it.
 This fork adds an optional local streaming dictation transport while retaining
 the original floating Accessibility microphone, on-device Sherpa-ONNX models,
 legacy batch options and clipboard insertion fallback. The streaming code
-**does not use the legacy OpenAI transcription or cleanup endpoints**.
+does not use the legacy OpenAI *transcription* endpoint. A deliberate tap-to-start/tap-to-stop session optionally sends its completed transcript to OpenAI for cleanup; hold-and-release never sends text for cleanup.
 
 Read [STREAMING-STT.md](STREAMING-STT.md) for the exact WebSocket v1 protocol,
 security and failure behaviour, Android acceptance criteria and independent
@@ -181,7 +181,7 @@ or the new overlay UI on a physical device.
 
 Existing installations remain in the legacy on-device/API transport until the user explicitly selects AIOS streaming or local batch. The AIOS token is encrypted using Android Keystore and is never embedded in the APK. The app streams PCM16LE mono 16 kHz continuously while the microphone is
 recording. The overlay can show unstable and stable text; these updates
-never modify another application's field. To cancel, hold the floating microphone for at least 1.5 seconds, then hold it again within five seconds to confirm disposal without insertion. After the explicit stop and final
+never modify another application's field. To cancel a tap-to-record session, hold the microphone for 350 ms; it discards the recording without insertion. Holding from idle records raw dictation and releases to finish. After the explicit stop and final
 server result, the app inserts once into the field that was focused at
 recording start, or copies to the clipboard if focus changed. A broken
 stream results in an explicit local batch fallback from the preserved recording; a no-speech final does not retry batch. If the beginning of the connection takes too long, the app retains audio but switches to batch rather than risking out-of-order sample delivery.

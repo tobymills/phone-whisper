@@ -347,7 +347,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val moved = abs(ev.rawX - touchX) + abs(ev.rawY - touchY)
-                    if (moved > TAP_THRESHOLD_DP * dp) {
+                    if (!holdStarted && moved > TAP_THRESHOLD_DP * dp) {
                         dragging = true
                         handler.removeCallbacks(longHold)
                     }

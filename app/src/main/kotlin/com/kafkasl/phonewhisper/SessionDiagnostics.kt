@@ -22,7 +22,8 @@ object SessionDiagnostics {
             "started", "capturing", "connected", "streaming", "finalising",
             "stream_failed", "batch_fallback", "batch_success", "batch_failed",
             "stream_success", "legacy_success", "injected", "clipboard",
-            "cancelled", "failed"
+            "cancelled", "failed", "cleanup_success", "cleanup_failed",
+            "cleanup_unavailable"
         )
         val allowedSources = setOf("streaming", "local_batch", "batch_fallback", "legacy")
         if (stage !in allowedStages || source !in allowedSources) return
