@@ -11,10 +11,32 @@ android {
         applicationId = "com.kafkasl.phonewhisper"
         minSdk = 30
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.3.0"
+        versionCode = System.getenv("PHONE_WHISPER_VERSION_CODE")?.toIntOrNull() ?: 3
+        versionName = "0.4.0"
 
         ndk { abiFilters += "arm64-v8a" }
+    }
+
+    // Configure the installable APK only when CI has an explicitly supplied
+    // persistent key. Local debug builds remain independent of signing secrets.
+    val stableKeystore = System.getenv("PHONE_WHISPER_KEYSTORE_FILE")
+    if (!stableKeystore.isNullOrBlank()) {
+        signingConfigs {
+            create("stable") {
+                storeFile = file(stableKeystore)
+                storePassword = System.getenv("PHONE_WHISPER_STORE_PASSWORD")
+                    ?: error("Missing PHONE_WHISPER_STORE_PASSWORD")
+                keyAlias = System.getenv("PHONE_WHISPER_KEY_ALIAS")
+                    ?: error("Missing PHONE_WHISPER_KEY_ALIAS")
+                keyPassword = System.getenv("PHONE_WHISPER_KEY_PASSWORD")
+                    ?: error("Missing PHONE_WHISPER_KEY_PASSWORD")
+            }
+        }
+        buildTypes {
+            getByName("release") {
+                signingConfig = signingConfigs.getByName("stable")
+            }
+        }
     }
 
     compileOptions {
