@@ -1035,8 +1035,8 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
         showFeedback("Cleaning up text…", 4000)
         val prompt = prefs().getString(
-            "post_processing_prompt", PostProcessor.SIMPLE_PROMPT
-        ) ?: PostProcessor.SIMPLE_PROMPT
+            "post_processing_prompt", PostProcessor.DEFAULT_PROMPT
+        ) ?: PostProcessor.DEFAULT_PROMPT
         PostProcessor.process(raw, prompt, apiKey) { result ->
             handler.post {
                 if (current != sessionId || state != State.TRANSCRIBING) return@post
