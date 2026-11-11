@@ -12,7 +12,7 @@ It supports:
 
 - **Local on-device transcription** with sherpa-onnx
 - **Cloud transcription** with OpenAI Whisper
-- **Optional cleanup** with OpenAI to fix punctuation and grammar
+- **Optional tap-to-clean dictation** through AIOS/Ollama; OpenAI is only retained for legacy cloud transcription
 
 If you try it and it genuinely saves you time, consider [sponsoring](https://github.com/sponsors/kafkasl)
 
@@ -58,7 +58,7 @@ make adb-install
 
 1. A small overlay button floats on screen
 2. Hold and release to record and insert raw transcription, or tap once to start AI-cleaned dictation
-3. For AI-cleaned dictation, tap again to stop and run OpenAI cleanup
+3. For AI-cleaned dictation, tap again to stop and run local AIOS/Ollama cleanup
 4. Audio is transcribed locally or in the cloud
 5. The text is inserted into the focused text field
 6. If insertion fails, the text is copied to the clipboard
@@ -165,7 +165,7 @@ Personal project. Do whatever you want with it.
 This fork adds an optional local streaming dictation transport while retaining
 the original floating Accessibility microphone, on-device Sherpa-ONNX models,
 legacy batch options and clipboard insertion fallback. The streaming code
-does not use the legacy OpenAI *transcription* endpoint. A deliberate tap-to-start/tap-to-stop session optionally sends its completed transcript to OpenAI for cleanup; hold-and-release never sends text for cleanup.
+does not use the legacy OpenAI *transcription* endpoint. A deliberate tap-to-start/tap-to-stop session sends its completed transcript through the authenticated AIOS gateway to local Ollama cleanup; hold-and-release never sends text for cleanup.
 
 Read [STREAMING-STT.md](STREAMING-STT.md) for the exact WebSocket v1 protocol,
 security and failure behaviour, Android acceptance criteria and independent
