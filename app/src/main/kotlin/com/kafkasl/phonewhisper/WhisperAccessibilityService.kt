@@ -68,7 +68,6 @@ class WhisperAccessibilityService : AccessibilityService() {
     private var pcmStream: ByteArrayOutputStream? = null
     private val pcmLock = Any()
     @Volatile private var streamReady = false
-    private var cancelArmedUntil = 0L
     private var cleanUpThisSession = false
     private var holdStarted = false
     private var dragging = false
@@ -80,8 +79,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                 showFeedback("Quick dictation — release to finish", 1800)
         } else if (!dragging && state != State.IDLE) {
             holdStarted = true
-            cancelArmedUntil = android.os.SystemClock.uptimeMillis() + 5000
-            showFeedback("Release, then hold again to discard", 3000)
+            cancelDictation()
         }
     }
     private val handshakeTimeout = Runnable {
@@ -344,7 +342,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                     touchDownAt = ev.eventTime
                     holdStarted = false
                     dragging = false
-                    if (state == State.IDLE) handler.postDelayed(longHold, 350)
+                    handler.postDelayed(longHold, 350)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -530,12 +528,11 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** Long hold during an active tap session: confirm cancellation on the next hold. */
+    /** Holding an active tap session cancels without inserting any text. */
     private fun cancelDictation() {
         ++sessionId
         streamingFailed = true
         streamReady = false
-        cancelArmedUntil = 0L
         handler.removeCallbacks(longHold)
         handler.removeCallbacks(finalTimeout)
         handler.removeCallbacks(handshakeTimeout)
@@ -570,7 +567,6 @@ class WhisperAccessibilityService : AccessibilityService() {
         diagnosticId = UUID.randomUUID().toString().replace("-", "")
         fallbackNotified = false
         finalInserted = false
-        cancelArmedUntil = 0L
         startingFocus = captureFocus()
         if (startingFocus?.isPassword == true) {
             reset("Dictation into password fields is disabled")
