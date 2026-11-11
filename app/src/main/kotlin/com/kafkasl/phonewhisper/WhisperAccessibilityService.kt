@@ -1025,27 +1025,24 @@ class WhisperAccessibilityService : AccessibilityService() {
             return
         }
         val current = sessionId
-        val apiKey = prefs().getString("api_key", "").orEmpty()
-        if (apiKey.isBlank()) {
+        val token = LocalSecrets.read(this)
+        if (token.isBlank()) {
             recordStage("cleanup_unavailable", transcriptSource)
             injectTextToOriginalFocus(raw)
-            showFeedback("OpenAI key missing — raw transcript used", 3500)
+            showFeedback("AIOS token missing — raw transcript used", 3500)
             completeSession()
             return
         }
-        showFeedback("Cleaning up text…", 4000)
-        val prompt = prefs().getString(
-            "post_processing_prompt", PostProcessor.DEFAULT_PROMPT
-        ) ?: PostProcessor.DEFAULT_PROMPT
-        PostProcessor.process(raw, prompt, apiKey) { result ->
+        showFeedback("Cleaning up on AIOS…", 4000)
+        LocalCleanupClient.clean(raw, token) { result ->
             handler.post {
                 if (current != sessionId || state != State.TRANSCRIBING) return@post
                 val cleaned = result.text?.takeIf { it.isNotBlank() }
-                recordStage(if (cleaned != null) "cleanup_success" else "cleanup_failed",
-                    transcriptSource)
+                recordStage(if (cleaned != null && !result.usedRaw)
+                    "cleanup_success" else "cleanup_failed", transcriptSource)
                 injectTextToOriginalFocus(cleaned ?: raw)
-                if (cleaned == null) showFeedback(
-                    "AI cleanup failed — raw transcript used", 3500
+                if (cleaned == null || result.usedRaw) showFeedback(
+                    "AIOS cleanup unavailable — raw transcript used", 3500
                 )
                 completeSession()
             }

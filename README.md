@@ -88,7 +88,7 @@ Phone Whisper supports two modes:
 
 - **Local mode**: audio stays on-device
 - **Cloud mode**: audio is sent directly from your device to OpenAI's transcription API
-- **Tap-to-clean dictation**: the final transcript is sent directly from your device to OpenAI's chat API when an API key is configured; hold-to-dictate never calls cleanup
+- **Tap-to-clean dictation**: the final transcript is sent to the authenticated AIOS text-cleanup endpoint backed by local Ollama; hold-to-dictate never calls cleanup
 
 I don't run a backend for this app. In cloud mode, requests go straight from your phone to OpenAI using your own API key.
 

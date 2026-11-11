@@ -188,8 +188,8 @@ class MainActivity : AppCompatActivity() {
         
         val postProcessRow = settingsRow(
             "AI cleanup (tap to dictate)",
-            "Tap microphone to start; tap again to finish and clean with OpenAI. " +
-                "Hold and release for raw transcription. Configure a prompt below."
+            "Tap to start/stop local AIOS cleanup via Ollama. " +
+                "Hold and release for raw transcription; no OpenAI key is needed."
         )
         cleanupSettingsRow = postProcessRow
         root.addView(postProcessRow)
@@ -207,7 +207,7 @@ class MainActivity : AppCompatActivity() {
         // --- Settings Section ---
         root.addView(sectionHeader("Settings"))
         
-        val keyRow = settingsRow("OpenAI API key (AI cleanup / legacy API)", "Tap to set") { promptApiKey() }
+        val keyRow = settingsRow("OpenAI API key (legacy transcription only)", "Tap to set") { promptApiKey() }
         keyRowSub = keyRow.findViewWithTag("subtitle")
         apiKeySettingsRow = keyRow
         root.addView(keyRow)
@@ -412,10 +412,11 @@ class MainActivity : AppCompatActivity() {
         val legacy = mode == "legacy"
         cloudSettingsRow.visibility = if (legacy) View.VISIBLE else View.GONE
         cleanupSettingsRow.visibility = View.VISIBLE
-        apiKeySettingsRow.visibility = View.VISIBLE
+        apiKeySettingsRow.visibility = if (legacy) View.VISIBLE else View.GONE
         modelContainer.visibility = if (legacy && useLocal) View.VISIBLE else View.GONE
-        promptContainer.visibility = View.VISIBLE
-        promptRow.visibility = View.VISIBLE
+        // AIOS owns the cleanup prompt; the legacy prompt controls do not apply.
+        promptContainer.visibility = View.GONE
+        promptRow.visibility = View.GONE
 
         val apiKey = prefs().getString("api_key", "") ?: ""
         keyRowSub.text = if (apiKey.isBlank()) "Tap to set" 
