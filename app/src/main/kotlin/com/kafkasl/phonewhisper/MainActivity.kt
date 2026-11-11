@@ -434,16 +434,15 @@ class MainActivity : AppCompatActivity() {
         // Ready logic
         val localReady = useLocal && hasModel
         val cloudReady = !useLocal && hasKey
-        val postReady = !usePostProcessing || hasKey
         val ready = audio && acc && when (mode) {
             "streaming" -> streamUrl.startsWith("wss://", true) &&
                 batchUrl.startsWith("https://", true) && streamToken.isNotBlank()
             "local_batch" -> batchUrl.startsWith("https://", true) &&
                 streamToken.isNotBlank()
-            else -> (localReady || cloudReady) && postReady
+            else -> localReady || cloudReady
         }
 
-        statusSubtitle.text = if (ready) "Ready — tap the overlay dot to dictate" else "Setup required"
+        statusSubtitle.text = if (ready) "Ready — hold for raw dictation; tap to start/stop AI cleanup" else "Setup required"
         statusSubtitle.setTextColor(if (ready) attrColor(com.google.android.material.R.attr.colorPrimary) else attrColor(android.R.attr.textColorSecondary))
         
         refreshAllCards()
