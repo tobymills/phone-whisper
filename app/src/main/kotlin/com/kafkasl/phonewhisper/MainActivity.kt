@@ -177,7 +177,7 @@ class MainActivity : AppCompatActivity() {
         val transcriptPositionRow = settingsRow("Live transcript position", "Top") {
             val options = arrayOf("Top", "Middle", "Bottom")
             val values = arrayOf("top", "middle", "bottom")
-            val current = prefs().getString("transcript_position", "top")
+            val current = prefs().getString("transcript_position", "top") ?: "top"
             android.app.AlertDialog.Builder(this)
                 .setTitle("Live transcript position")
                 .setSingleChoiceItems(options, values.indexOf(current).coerceAtLeast(0)) { dialog, index ->
