@@ -162,6 +162,9 @@ Personal project. Do whatever you want with it.
 
 ## Local AIOS streaming fork (feature branch; experimental)
 
+**Current status (12 November 2026):** the active streaming application branch is `feature/local-streaming-stt`, not Android `main`. The AIOS backend was automatically deployed and verified healthy, and one short real handset streaming session finished successfully; the earlier intermittent connection loss is not yet explained. Signed APKs are published as ZIP artefacts by the [Streaming dictation validation workflow](https://github.com/tobymills/phone-whisper/actions/workflows/streaming-ci.yml), not as a new GitHub Release. The latest push-to-talk visual enlarges by a further 20% while held (1.15× → 1.38×, 72dp overlay bounds); install and physical thumb-clearance testing remain pending. See [the dated handover](STREAMING-STT.md#handover--12-november-2026-latest-verified-evidence).
+
+
 This fork adds an optional local streaming dictation transport while retaining
 the original floating Accessibility microphone, on-device Sherpa-ONNX models,
 legacy batch options and clipboard insertion fallback. The streaming code
