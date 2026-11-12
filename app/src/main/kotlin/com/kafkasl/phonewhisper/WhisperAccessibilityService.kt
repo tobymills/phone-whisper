@@ -41,7 +41,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         private const val PAD_DP = 10
         private const val MARGIN_DP = 8
         private const val TAP_THRESHOLD_DP = 10
-        private const val RING_DP = 56
+        private const val RING_DP = 72
 
         private const val COLOR_IDLE = 0xDD1C1C1E.toInt()
         private const val COLOR_RECORDING = 0xDDEF4444.toInt()
@@ -485,9 +485,9 @@ class WhisperAccessibilityService : AccessibilityService() {
         handler.post { button?.background = circle(color) }
     }
 
-    /** Increase the mic graphic without changing its touch target or ring size. */
+    /** Enlarge the held microphone by 20% beyond the previous 1.15x scale; keep it within the overlay bounds. */
     private fun setPushToTalkVisual(active: Boolean) {
-        val scale = if (active) 1.15f else 1f
+        val scale = if (active) 1.38f else 1f
         button?.scaleX = scale
         button?.scaleY = scale
     }
