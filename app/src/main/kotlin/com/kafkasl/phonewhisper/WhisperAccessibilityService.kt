@@ -520,6 +520,10 @@ class WhisperAccessibilityService : AccessibilityService() {
     }
 
     private fun clearLivePreview() {
+        if (liveTranscriptPreview.isNotBlank()) {
+            feedbackView?.animate()?.cancel()
+            feedbackView?.visibility = View.GONE
+        }
         liveTranscriptPreview = ""
         handler.removeCallbacks(hideFeedback)
     }
