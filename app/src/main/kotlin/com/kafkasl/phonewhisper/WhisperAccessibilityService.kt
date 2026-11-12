@@ -57,6 +57,7 @@ class WhisperAccessibilityService : AccessibilityService() {
     private var button: ImageView? = null
     private var spinner: ProgressBar? = null
     private var feedbackView: TextView? = null
+    private var liveTranscriptPreview = ""
     private var layoutParams: WindowManager.LayoutParams? = null
     private var feedbackLayoutParams: WindowManager.LayoutParams? = null
     private var docked = false
@@ -77,6 +78,8 @@ class WhisperAccessibilityService : AccessibilityService() {
             startRecording(cleanUp = false)
             if (state == State.RECORDING || state == State.CONNECTING)
                 showFeedback("Quick dictation — release to finish", 1800)
+            if (state == State.RECORDING || state == State.CONNECTING)
+                setPushToTalkVisual(true)
         } else if (!dragging && state != State.IDLE) {
             holdStarted = true
             cancelDictation()
@@ -112,9 +115,13 @@ class WhisperAccessibilityService : AccessibilityService() {
     )
     private val handler = Handler(Looper.getMainLooper())
     private val hideFeedback = Runnable {
-        feedbackView?.animate()?.alpha(0f)?.setDuration(180)?.withEndAction {
-            feedbackView?.visibility = View.GONE
-        }?.start()
+        if (state == State.RECORDING && liveTranscriptPreview.isNotBlank()) {
+            showLivePreview(liveTranscriptPreview)
+        } else {
+            feedbackView?.animate()?.alpha(0f)?.setDuration(180)?.withEndAction {
+                feedbackView?.visibility = View.GONE
+            }?.start()
+        }
     }
 
     // Local transcription engine (loaded lazily)
@@ -148,6 +155,15 @@ class WhisperAccessibilityService : AccessibilityService() {
     fun updateOverlayVisibility() {
         handler.removeCallbacks(refreshOverlay)
         handler.postDelayed(refreshOverlay, 80)
+    }
+
+    fun updateTranscriptPosition() {
+        handler.post {
+            val params = feedbackLayoutParams ?: return@post
+            val view = feedbackView ?: return@post
+            positionFeedback(params)
+            (getSystemService(WINDOW_SERVICE) as WindowManager).updateViewLayout(view, params)
+        }
     }
 
     private val refreshOverlay = Runnable {
@@ -363,6 +379,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    setPushToTalkVisual(false)
                     handler.removeCallbacks(longHold)
                     val held = holdStarted
                     if (dragging) {
@@ -391,6 +408,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
+                    setPushToTalkVisual(false)
                     handler.removeCallbacks(longHold)
                     if (holdStarted && !cleanUpThisSession &&
                         (state == State.CONNECTING || state == State.RECORDING)) {
@@ -467,6 +485,13 @@ class WhisperAccessibilityService : AccessibilityService() {
         handler.post { button?.background = circle(color) }
     }
 
+    /** Increase the mic graphic without changing its touch target or ring size. */
+    private fun setPushToTalkVisual(active: Boolean) {
+        val scale = if (active) 1.15f else 1f
+        button?.scaleX = scale
+        button?.scaleY = scale
+    }
+
     private fun setBusy(visible: Boolean) {
         handler.post {
             spinner?.visibility = if (visible) View.VISIBLE else View.GONE
@@ -475,27 +500,43 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     private fun positionFeedback(feedbackParams: WindowManager.LayoutParams) {
         val margin = (MARGIN_DP * dp).toInt()
-        // Feedback is touch-through at the top, never adjacent to the stop button.
+        // Touch-through bubble, positioned independently of the microphone.
         feedbackParams.x = margin
-        feedbackParams.y = (64 * dp).toInt()
+        feedbackParams.y = when (prefs().getString("transcript_position", "top")) {
+            "middle" -> (screenH / 2 - 60 * dp).toInt().coerceAtLeast(0)
+            "bottom" -> (screenH - 160 * dp).toInt().coerceAtLeast(0)
+            else -> (64 * dp).toInt()
+        }
     }
 
     private fun showFeedback(text: String, durationMs: Long = 2000) {
+        renderFeedback(text, durationMs)
+    }
+
+    private fun showLivePreview(text: String) {
+        if (text.isBlank()) return
+        liveTranscriptPreview = text
+        renderFeedback(text, null)
+    }
+
+    private fun clearLivePreview() {
+        liveTranscriptPreview = ""
+        handler.removeCallbacks(hideFeedback)
+    }
+
+    private fun renderFeedback(text: String, durationMs: Long?) {
         handler.post {
             val view = feedbackView ?: return@post
-            val feedbackParams = feedbackLayoutParams ?: return@post
+            val params = feedbackLayoutParams ?: return@post
             val wm = getSystemService(WINDOW_SERVICE) as WindowManager
-
             view.text = text
-            positionFeedback(feedbackParams)
-            wm.updateViewLayout(view, feedbackParams)
-
+            positionFeedback(params)
+            wm.updateViewLayout(view, params)
             handler.removeCallbacks(hideFeedback)
             view.animate().cancel()
             view.visibility = View.VISIBLE
-            view.alpha = 0f
-            view.animate().alpha(1f).setDuration(120).start()
-            handler.postDelayed(hideFeedback, durationMs)
+            view.alpha = 1f
+            if (durationMs != null) handler.postDelayed(hideFeedback, durationMs)
         }
     }
 
@@ -530,6 +571,8 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     /** Holding an active tap session cancels without inserting any text. */
     private fun cancelDictation() {
+        clearLivePreview()
+        setPushToTalkVisual(false)
         ++sessionId
         streamingFailed = true
         streamReady = false
@@ -564,6 +607,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
         sessionId++
         cleanUpThisSession = cleanUp
+        clearLivePreview()
         diagnosticId = UUID.randomUUID().toString().replace("-", "")
         fallbackNotified = false
         finalInserted = false
@@ -586,6 +630,7 @@ class WhisperAccessibilityService : AccessibilityService() {
     private fun recordStreamFailure(message: String) {
         if (fallbackNotified) return
         fallbackNotified = true
+        clearLivePreview()
         recordStage("stream_failed", "streaming")
         showFeedback(message, 3500)
     }
@@ -645,8 +690,8 @@ class WhisperAccessibilityService : AccessibilityService() {
                 handler.post {
                     if (current == sessionId && state == State.RECORDING &&
                         !streamingFailed) {
-                        val displayed = (stable + " " + unstable).trim().takeLast(150)
-                        if (displayed.isNotBlank()) showFeedback(displayed, 3000)
+                        val displayed = TranscriptPreviewPolicy.lastTwoSentences(stable, unstable)
+                        if (displayed.isNotBlank()) showLivePreview(displayed)
                     }
                 }
             }
@@ -783,6 +828,7 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     /** Stop and join capture before sending stop or the complete local batch fallback. */
     private fun stopAndTranscribe() {
+        clearLivePreview()
         state = State.TRANSCRIBING
         recordStage("finalising")
         stopPulse()
@@ -877,6 +923,8 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     /** Release session buffers and timers after one final success or no-speech result. */
     private fun completeSession() {
+        clearLivePreview()
+        setPushToTalkVisual(false)
         handler.removeCallbacks(finalTimeout)
         handler.removeCallbacks(handshakeTimeout)
         streamReady = false
@@ -1051,6 +1099,8 @@ class WhisperAccessibilityService : AccessibilityService() {
 
     /** Report a terminal local error; future callbacks are ignored by session ID. */
     private fun reset(msg: String) {
+        clearLivePreview()
+        setPushToTalkVisual(false)
         handler.removeCallbacks(finalTimeout)
         handler.removeCallbacks(handshakeTimeout)
         streamReady = false

@@ -33,6 +33,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var keyRowSub: TextView
     private lateinit var overlayVisibilitySub: TextView
     private lateinit var overlayRecessSub: TextView
+    private lateinit var transcriptPositionSub: TextView
     private lateinit var lastSessionSub: TextView
     private lateinit var transportRowSub: TextView
     private lateinit var streamUrlSub: TextView
@@ -172,6 +173,22 @@ class MainActivity : AppCompatActivity() {
         }
         overlayRecessSub = recessRow.findViewWithTag("subtitle")
         root.addView(recessRow)
+
+        val transcriptPositionRow = settingsRow("Live transcript position", "Top") {
+            val options = arrayOf("Top", "Middle", "Bottom")
+            val values = arrayOf("top", "middle", "bottom")
+            val current = prefs().getString("transcript_position", "top")
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Live transcript position")
+                .setSingleChoiceItems(options, values.indexOf(current).coerceAtLeast(0)) { dialog, index ->
+                    prefs().edit().putString("transcript_position", values[index]).apply()
+                    WhisperAccessibilityService.instance?.updateTranscriptPosition()
+                    dialog.dismiss()
+                    refresh()
+                }.setNegativeButton("Cancel", null).show()
+        }
+        transcriptPositionSub = transcriptPositionRow.findViewWithTag("subtitle")
+        root.addView(transcriptPositionRow)
 
         val sessionRow = settingsRow("Last dictation", "No recent session")
         lastSessionSub = sessionRow.findViewWithTag("subtitle")
@@ -393,6 +410,11 @@ class MainActivity : AppCompatActivity() {
             prefs().getString("overlay_visibility", "focused") == "always"
         ) "Always" else "Only when typing"
         overlayRecessSub.text = if (prefs().getBoolean("overlay_recess", true)) "On" else "Off"
+        transcriptPositionSub.text = when (prefs().getString("transcript_position", "top")) {
+            "middle" -> "Middle"
+            "bottom" -> "Bottom"
+            else -> "Top"
+        }
         lastSessionSub.text = prefs().getString(
             SessionDiagnostics.KEY, "No recent session"
         ) ?: "No recent session"
