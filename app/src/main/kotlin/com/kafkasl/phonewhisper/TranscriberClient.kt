@@ -15,11 +15,11 @@ object TranscriberClient {
         val obj = JSONObject(json)
         when {
             obj.has("text") -> Result(obj.getString("text"), null)
-            obj.has("error") -> Result(null, obj.getJSONObject("error").getString("message"))
+            obj.has("error") -> Result(null, "Transcription service returned an error.")
             else -> Result(null, "Unknown response")
         }
     } catch (e: Exception) {
-        Result(null, e.message ?: "Parse error")
+        Result(null, "Transcription service returned an invalid response.")
     }
 
     fun transcribe(wavData: ByteArray, apiKey: String, callback: (Result) -> Unit) {
@@ -36,7 +36,8 @@ object TranscriberClient {
             .build()
 
         client.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) = callback(Result(null, e.message))
+            override fun onFailure(call: Call, e: IOException) =
+                callback(Result(null, "Could not connect to the transcription service."))
             override fun onResponse(call: Call, response: Response) =
                 callback(parseResponse(response.body?.string() ?: ""))
         })

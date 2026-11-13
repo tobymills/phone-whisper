@@ -1,0 +1,76 @@
+name: Streaming dictation validation
+on:
+  push:
+    branches: [feature/local-streaming-stt]
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android SDK components
+        run: |
+          SDKMANAGER="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools" -type f -name sdkmanager | head -1)"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-34" "build-tools;34.0.0"
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
+      - name: Android lint
+        run: ./gradlew :app:lintDebug
+      - name: Debug APK
+        run: ./gradlew :app:assembleDebug
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: phone-whisper-streaming-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      # A debug APK uses an ephemeral GitHub runner key and cannot reliably
+      # update an APK installed from a previous run. Use the signed artifact.
+      - name: Check stable signing configuration
+        id: signing
+        env:
+          SIGNING_KEYSTORE: ${{ secrets.PHONE_WHISPER_KEYSTORE_BASE64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.PHONE_WHISPER_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.PHONE_WHISPER_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.PHONE_WHISPER_KEY_PASSWORD }}
+        run: |
+          if [[ -n "$SIGNING_KEYSTORE" && -n "$SIGNING_STORE_PASSWORD" && -n "$SIGNING_KEY_ALIAS" && -n "$SIGNING_KEY_PASSWORD" ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Stable signing secrets are not configured; installable update APK not produced."
+          fi
+      - name: Build stable signed release APK
+        if: steps.signing.outputs.configured == 'true'
+        env:
+          PHONE_WHISPER_KEYSTORE_BASE64: ${{ secrets.PHONE_WHISPER_KEYSTORE_BASE64 }}
+          PHONE_WHISPER_STORE_PASSWORD: ${{ secrets.PHONE_WHISPER_STORE_PASSWORD }}
+          PHONE_WHISPER_KEY_ALIAS: ${{ secrets.PHONE_WHISPER_KEY_ALIAS }}
+          PHONE_WHISPER_KEY_PASSWORD: ${{ secrets.PHONE_WHISPER_KEY_PASSWORD }}
+          PHONE_WHISPER_VERSION_CODE: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          export PHONE_WHISPER_KEYSTORE_FILE="$RUNNER_TEMP/phone-whisper-signing.jks"
+          trap 'rm -f "$PHONE_WHISPER_KEYSTORE_FILE"' EXIT
+          printf '%s' "$PHONE_WHISPER_KEYSTORE_BASE64" | base64 --decode > "$PHONE_WHISPER_KEYSTORE_FILE"
+          chmod 600 "$PHONE_WHISPER_KEYSTORE_FILE"
+          ./gradlew :app:assembleRelease
+      - name: Upload stable signed release APK
+        if: steps.signing.outputs.configured == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: phone-whisper-signed-release
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 14

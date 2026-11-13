@@ -5,3 +5,8 @@ local.properties
 .env
 *.apk
 app/src/main/jniLibs/
+
+# Signing keys must never be committed.
+*.jks
+*.keystore
+*.p12

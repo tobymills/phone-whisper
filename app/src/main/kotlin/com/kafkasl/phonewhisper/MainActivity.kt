@@ -24,10 +24,21 @@ import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
+    private lateinit var cloudSettingsRow: LinearLayout
+    private lateinit var cleanupSettingsRow: LinearLayout
+    private lateinit var apiKeySettingsRow: LinearLayout
     private lateinit var statusSubtitle: TextView
     private lateinit var audioRowSub: TextView
     private lateinit var accRowSub: TextView
     private lateinit var keyRowSub: TextView
+    private lateinit var overlayVisibilitySub: TextView
+    private lateinit var overlayRecessSub: TextView
+    private lateinit var transcriptPositionSub: TextView
+    private lateinit var lastSessionSub: TextView
+    private lateinit var transportRowSub: TextView
+    private lateinit var streamUrlSub: TextView
+    private lateinit var batchUrlSub: TextView
+    private lateinit var streamTokenSub: TextView
     private lateinit var promptRowSub: TextView
     private lateinit var promptRow: LinearLayout
     private lateinit var modelContainer: LinearLayout
@@ -97,7 +108,91 @@ class MainActivity : AppCompatActivity() {
             cloudSwitch.isChecked = newCloud
             refresh()
         }
+        cloudSettingsRow = cloudRow
         root.addView(cloudRow)
+
+        // Local AIOS transport is independent of legacy on-device/cloud settings.
+        val transportRow = settingsRow("Dictation transport", "AIOS streaming") {
+            chooseTransport()
+        }
+        transportRowSub = transportRow.findViewWithTag("subtitle")
+        root.addView(transportRow)
+
+        val streamUrlRow = settingsRow(
+            "Streaming WebSocket", "wss://stt.millsho.me/v1/audio/stream"
+        ) {
+            editLocalSetting("stream_url", "Streaming WebSocket URL",
+                "wss://stt.millsho.me/v1/audio/stream")
+        }
+        streamUrlSub = streamUrlRow.findViewWithTag("subtitle")
+        root.addView(streamUrlRow)
+
+        val batchUrlRow = settingsRow(
+            "AIOS batch endpoint", "https://stt.millsho.me/v1/audio/transcriptions"
+        ) {
+            editLocalSetting("batch_url", "AIOS batch endpoint",
+                "https://stt.millsho.me/v1/audio/transcriptions")
+        }
+        batchUrlSub = batchUrlRow.findViewWithTag("subtitle")
+        root.addView(batchUrlRow)
+
+        val streamTokenRow = settingsRow("AIOS bearer token", "Tap to configure") {
+            editLocalSetting("stream_token", "AIOS bearer token", "", secret = true)
+        }
+        streamTokenSub = streamTokenRow.findViewWithTag("subtitle")
+        root.addView(streamTokenRow)
+
+        // Accessibility overlay options are independent of transcription mode.
+        val visibilityRow = settingsRow("Microphone button", "Only when typing") {
+            val options = arrayOf("Only when typing", "Always")
+            val current = prefs().getString("overlay_visibility", "focused")
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Show microphone button")
+                .setSingleChoiceItems(options, if (current == "always") 1 else 0) { dialog, index ->
+                    prefs().edit().putString("overlay_visibility",
+                        if (index == 0) "focused" else "always").apply()
+                    WhisperAccessibilityService.instance?.updateOverlayVisibility()
+                    dialog.dismiss()
+                    refresh()
+                }.setNegativeButton("Cancel", null).show()
+        }
+        overlayVisibilitySub = visibilityRow.findViewWithTag("subtitle")
+        root.addView(visibilityRow)
+
+        val recessRow = settingsRow("Recess button when idle", "On") {
+            val options = arrayOf("On", "Off")
+            val enabled = prefs().getBoolean("overlay_recess", true)
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Recess button when idle")
+                .setSingleChoiceItems(options, if (enabled) 0 else 1) { dialog, index ->
+                    prefs().edit().putBoolean("overlay_recess", index == 0).apply()
+                    WhisperAccessibilityService.instance?.updateOverlayVisibility()
+                    dialog.dismiss()
+                    refresh()
+                }.setNegativeButton("Cancel", null).show()
+        }
+        overlayRecessSub = recessRow.findViewWithTag("subtitle")
+        root.addView(recessRow)
+
+        val transcriptPositionRow = settingsRow("Live transcript position", "Top") {
+            val options = arrayOf("Top", "Middle", "Bottom")
+            val values = arrayOf("top", "middle", "bottom")
+            val current = prefs().getString("transcript_position", "top") ?: "top"
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Live transcript position")
+                .setSingleChoiceItems(options, values.indexOf(current).coerceAtLeast(0)) { dialog, index ->
+                    prefs().edit().putString("transcript_position", values[index]).apply()
+                    WhisperAccessibilityService.instance?.updateTranscriptPosition()
+                    dialog.dismiss()
+                    refresh()
+                }.setNegativeButton("Cancel", null).show()
+        }
+        transcriptPositionSub = transcriptPositionRow.findViewWithTag("subtitle")
+        root.addView(transcriptPositionRow)
+
+        val sessionRow = settingsRow("Last dictation", "No recent session")
+        lastSessionSub = sessionRow.findViewWithTag("subtitle")
+        root.addView(sessionRow)
 
         // Local Models section
         modelContainer = vertical(0)
@@ -106,19 +201,14 @@ class MainActivity : AppCompatActivity() {
         root.addView(modelContainer)
 
         // --- Post-Processing Section ---
-        root.addView(sectionHeader("Post-Processing"))
+        root.addView(sectionHeader("AI cleanup"))
         
-        val isPostProcessing = prefs().getBoolean("use_post_processing", false)
-        val postProcessSwitch = MaterialSwitch(this).apply {
-            isChecked = isPostProcessing
-            isClickable = false
-        }
-        val postProcessRow = settingsRow("Cleanup transcript", "Uses OpenAI Chat API to fix grammar and punctuation", postProcessSwitch) {
-            val newVal = !postProcessSwitch.isChecked
-            prefs().edit().putBoolean("use_post_processing", newVal).apply()
-            postProcessSwitch.isChecked = newVal
-            refresh()
-        }
+        val postProcessRow = settingsRow(
+            "AI cleanup (tap to dictate)",
+            "Tap to start/stop local AIOS cleanup via Ollama. " +
+                "Hold and release for raw transcription; no OpenAI key is needed."
+        )
+        cleanupSettingsRow = postProcessRow
         root.addView(postProcessRow)
 
         promptContainer = vertical(0)
@@ -134,8 +224,9 @@ class MainActivity : AppCompatActivity() {
         // --- Settings Section ---
         root.addView(sectionHeader("Settings"))
         
-        val keyRow = settingsRow("OpenAI API Key", "Tap to set") { promptApiKey() }
+        val keyRow = settingsRow("OpenAI API key (legacy transcription only)", "Tap to set") { promptApiKey() }
         keyRowSub = keyRow.findViewWithTag("subtitle")
+        apiKeySettingsRow = keyRow
         root.addView(keyRow)
 
         setContentView(ScrollView(this).apply {
@@ -232,7 +323,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     is DownloadState.Error -> {
                         views.progress.visibility = View.GONE
-                        views.subtitle.text = "Error: ${state.message}"
+                        views.subtitle.text = "Model download failed. Check your connection and try again."
                         views.dlBtn.isEnabled = true
                     }
                 }
@@ -307,16 +398,49 @@ class MainActivity : AppCompatActivity() {
         val audio = hasPerm(Manifest.permission.RECORD_AUDIO)
         val acc = WhisperAccessibilityService.instance != null
         val useLocal = prefs().getBoolean("use_local", true)
-        val usePostProcessing = prefs().getBoolean("use_post_processing", false)
         val hasKey = !prefs().getString("api_key", "").isNullOrBlank()
         val hasModel = LocalTranscriber.availableModels(this).isNotEmpty()
+        val mode = prefs().getString("transcription_mode", "legacy") ?: "legacy"
+        val streamUrl = prefs().getString("stream_url",
+            "wss://stt.millsho.me/v1/audio/stream").orEmpty()
+        val batchUrl = prefs().getString("batch_url",
+            "https://stt.millsho.me/v1/audio/transcriptions").orEmpty()
+        val streamToken = LocalSecrets.read(this)
+        overlayVisibilitySub.text = if (
+            prefs().getString("overlay_visibility", "focused") == "always"
+        ) "Always" else "Only when typing"
+        overlayRecessSub.text = if (prefs().getBoolean("overlay_recess", true)) "On" else "Off"
+        transcriptPositionSub.text = when (prefs().getString("transcript_position", "top")) {
+            "middle" -> "Middle"
+            "bottom" -> "Bottom"
+            else -> "Top"
+        }
+        lastSessionSub.text = prefs().getString(
+            SessionDiagnostics.KEY, "No recent session"
+        ) ?: "No recent session"
+        val batchConfigured = AiosBatchFallbackPolicy.configured(batchUrl, streamToken)
+        transportRowSub.text = when (mode) {
+            "streaming" -> if (batchConfigured) "AIOS streaming · AIOS batch backup configured"
+                else "AIOS streaming · no batch backup configured"
+            "local_batch" -> "AIOS server batch transcription"
+            else -> "Legacy on-device / existing API"
+        }
+        streamUrlSub.text = streamUrl
+        batchUrlSub.text = batchUrl
+        streamTokenSub.text = if (streamToken.isBlank()) "Tap to configure"
+            else "Configured (hidden)"
 
         audioRowSub.text = if (audio) "Granted" else "Tap to grant permission"
         accRowSub.text = if (acc) "Enabled" else "Tap to enable in settings"
 
-        modelContainer.visibility = if (useLocal) View.VISIBLE else View.GONE
-        promptContainer.visibility = if (usePostProcessing) View.VISIBLE else View.GONE
-        promptRow.visibility = if (usePostProcessing) View.VISIBLE else View.GONE
+        val legacy = mode == "legacy"
+        cloudSettingsRow.visibility = if (legacy) View.VISIBLE else View.GONE
+        cleanupSettingsRow.visibility = View.VISIBLE
+        apiKeySettingsRow.visibility = if (legacy) View.VISIBLE else View.GONE
+        modelContainer.visibility = if (legacy && useLocal) View.VISIBLE else View.GONE
+        // AIOS owns the cleanup prompt; the legacy prompt controls do not apply.
+        promptContainer.visibility = View.GONE
+        promptRow.visibility = View.GONE
 
         val apiKey = prefs().getString("api_key", "") ?: ""
         keyRowSub.text = if (apiKey.isBlank()) "Tap to set" 
@@ -335,14 +459,62 @@ class MainActivity : AppCompatActivity() {
         // Ready logic
         val localReady = useLocal && hasModel
         val cloudReady = !useLocal && hasKey
-        val postReady = !usePostProcessing || hasKey
-        val ready = audio && acc && (localReady || cloudReady) && postReady
+        val ready = audio && acc && when (mode) {
+            "streaming" -> streamUrl.startsWith("wss://", true) &&
+                streamToken.isNotBlank()
+            "local_batch" -> batchConfigured
+            else -> localReady || cloudReady
+        }
 
-        statusSubtitle.text = if (ready) "Ready — tap the overlay dot to dictate" else "Setup required"
+        statusSubtitle.text = if (ready) "Ready — hold for raw dictation; tap to start/stop AI cleanup" else "Setup required"
         statusSubtitle.setTextColor(if (ready) attrColor(com.google.android.material.R.attr.colorPrimary) else attrColor(android.R.attr.textColorSecondary))
         
         refreshAllCards()
         refreshPromptRows()
+    }
+
+    private fun chooseTransport() {
+        val modes = arrayOf("AIOS streaming (recommended)",
+            "AIOS server batch", "Legacy on-device / existing API")
+        val values = arrayOf("streaming", "local_batch", "legacy")
+        val current = prefs().getString("transcription_mode", "legacy")
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Dictation transport")
+            .setSingleChoiceItems(modes, values.indexOf(current).coerceAtLeast(0)) { dialog, choice ->
+                prefs().edit().putString("transcription_mode", values[choice]).apply()
+                dialog.dismiss()
+                refresh()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun editLocalSetting(key: String, title: String, default: String,
+                                 secret: Boolean = false) {
+        val input = EditText(this).apply {
+            setSingleLine(true)
+            if (secret) {
+                inputType = InputType.TYPE_CLASS_TEXT or
+                    InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }
+            setText(if (secret) LocalSecrets.read(this@MainActivity) else prefs().getString(key, default))
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(input.apply { setPadding(dp(24), dp(8), dp(24), dp(8)) })
+            .setPositiveButton("Save") { _, _ ->
+                val value = input.text.toString().trim()
+                if (secret) {
+                    if (!LocalSecrets.store(this, value)) {
+                        toast("Could not save the AIOS token securely. Try again.")
+                    }
+                } else {
+                    prefs().edit().putString(key, value).apply()
+                }
+                refresh()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun promptApiKey() {

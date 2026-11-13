@@ -59,7 +59,7 @@ object ModelDownloader {
                 extractTarBz2(tmpFile, outDir)
                 onState(DownloadState.Done)
             } catch (e: Exception) {
-                onState(DownloadState.Error(e.message ?: "Unknown error"))
+                onState(DownloadState.Error("Model download or installation failed"))
             } finally {
                 tmpFile.delete()
             }
