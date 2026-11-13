@@ -101,7 +101,7 @@ class StreamingTranscriberTest {
         val client = client()
         assertTrue(client.connect(endpoint(), "wrong"))
         assertTrue(errorLatch.await(5, TimeUnit.SECONDS))
-        assertEquals("Streaming authentication rejected", error)
+        assertEquals("AIOS authentication failed. Check your access token.", error)
         assertEquals(0, finalCount.get())
     }
 
