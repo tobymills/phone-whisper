@@ -418,8 +418,10 @@ class MainActivity : AppCompatActivity() {
         lastSessionSub.text = prefs().getString(
             SessionDiagnostics.KEY, "No recent session"
         ) ?: "No recent session"
+        val batchConfigured = AiosBatchFallbackPolicy.configured(batchUrl, streamToken)
         transportRowSub.text = when (mode) {
-            "streaming" -> "AIOS streaming · AIOS batch backup"
+            "streaming" -> if (batchConfigured) "AIOS streaming · AIOS batch backup configured"
+                else "AIOS streaming · no batch backup configured"
             "local_batch" -> "AIOS server batch transcription"
             else -> "Legacy on-device / existing API"
         }
@@ -459,9 +461,8 @@ class MainActivity : AppCompatActivity() {
         val cloudReady = !useLocal && hasKey
         val ready = audio && acc && when (mode) {
             "streaming" -> streamUrl.startsWith("wss://", true) &&
-                batchUrl.startsWith("https://", true) && streamToken.isNotBlank()
-            "local_batch" -> batchUrl.startsWith("https://", true) &&
                 streamToken.isNotBlank()
+            "local_batch" -> batchConfigured
             else -> localReady || cloudReady
         }
 

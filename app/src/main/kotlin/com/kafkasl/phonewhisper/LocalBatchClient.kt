@@ -26,7 +26,7 @@ object LocalBatchClient {
         wav: ByteArray, url: String, token: String,
         callback: (TranscriberClient.Result) -> Unit
     ) {
-        if (!url.startsWith("https://", ignoreCase = true) || token.isBlank()) {
+        if (!AiosBatchFallbackPolicy.configured(url, token)) {
             callback(TranscriberClient.Result(null, "Check the AIOS batch URL and access token in Settings."))
             return
         }

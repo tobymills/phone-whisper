@@ -90,7 +90,7 @@ class WhisperAccessibilityService : AccessibilityService() {
             && !streamReady && !streamingFailed) {
             streamingFailed = true
             streamingSession?.cancel()
-            showFeedback("Live connection timed out. Will try AIOS batch when you stop.", 4000)
+            recordStreamFailure()
         }
     }
     private var recordingThread: Thread? = null
@@ -630,13 +630,19 @@ class WhisperAccessibilityService : AccessibilityService() {
         else startCapture()
     }
 
-    /** Surface one warning per session; sendAudio failure may be recoverable via batch. */
-    private fun recordStreamFailure(message: String) {
+    /** Say that batch will be attempted only if its endpoint and token are configured. */
+    private fun batchBackupConfigured(): Boolean = AiosBatchFallbackPolicy.configured(
+        prefs().getString("batch_url",
+            "https://stt.millsho.me/v1/audio/transcriptions").orEmpty(),
+        LocalSecrets.read(this)
+    )
+
+    private fun recordStreamFailure() {
         if (fallbackNotified) return
         fallbackNotified = true
         clearLivePreview()
         recordStage("stream_failed", "streaming")
-        showFeedback(message, 3500)
+        showFeedback(AiosBatchFallbackPolicy.streamingInterrupted(batchBackupConfigured()), 4000)
     }
 
     /** Open one WSS session while buffering the microphone from the first tap. */
@@ -682,7 +688,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                         // microphone recording is retained for one HTTPS batch retry.
                         streamReady = false
                         streamingSession?.cancel()
-                        recordStreamFailure("Live transcription interrupted. Will try AIOS batch when you stop.")
+                        recordStreamFailure()
                     } else {
                         recordStage("connected")
                         showFeedback("AIOS streaming connected", 1200)
@@ -718,7 +724,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                         State.RECORDING -> {
                             streamingFailed = true
                             streamReady = false
-                            recordStreamFailure("Live connection lost. Will try AIOS batch when you stop.")
+                            recordStreamFailure()
                         }
                         State.CONNECTING -> reset(reason)
                         State.TRANSCRIBING -> {
@@ -918,13 +924,18 @@ class WhisperAccessibilityService : AccessibilityService() {
         streamingSession = null
         handler.removeCallbacks(finalTimeout)
         if (recordingTransport == "local_batch_fallback") return
-        recordingTransport = "local_batch_fallback"
-        recordStage("batch_fallback", "batch_fallback")
-        val pcm = pendingPcm
-        if (pcm == null) {
-            reset(reason)
+        if (!batchBackupConfigured()) {
+            // No server-batch fallback exists; never imply that an on-device model is used.
+            reset(AiosBatchFallbackPolicy.NO_BACKUP_ERROR)
             return
         }
+        val pcm = pendingPcm
+        if (pcm == null) {
+            reset("Transcription failed. Recorded audio is unavailable for AIOS batch retry.")
+            return
+        }
+        recordingTransport = "local_batch_fallback"
+        recordStage("batch_fallback", "batch_fallback")
         showFeedback("Live transcription failed. Trying AIOS batch…", 3000)
         sendLocalBatch(pcm)
     }
