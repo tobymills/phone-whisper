@@ -26,6 +26,13 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var cloudSettingsRow: LinearLayout
     private lateinit var cleanupSettingsRow: LinearLayout
+    private lateinit var cleanupSwitch: MaterialSwitch
+    private lateinit var cleanupRowSub: TextView
+    private lateinit var cleanupUrlSub: TextView
+    private lateinit var streamEndpointRow: LinearLayout
+    private lateinit var batchEndpointRow: LinearLayout
+    private lateinit var tokenEndpointRow: LinearLayout
+    private lateinit var cleanupEndpointRow: LinearLayout
     private lateinit var apiKeySettingsRow: LinearLayout
     private lateinit var statusSubtitle: TextView
     private lateinit var audioRowSub: TextView
@@ -78,7 +85,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(statusRow)
 
         // --- Setup Section ---
-        root.addView(sectionHeader("Setup"))
+        root.addView(sectionHeader("Permissions"))
         
         val audioRow = settingsRow("Audio permission", "Checking...") {
             if (!hasPerm(Manifest.permission.RECORD_AUDIO)) {
@@ -111,36 +118,46 @@ class MainActivity : AppCompatActivity() {
         cloudSettingsRow = cloudRow
         root.addView(cloudRow)
 
-        // Local AIOS transport is independent of legacy on-device/cloud settings.
-        val transportRow = settingsRow("Dictation transport", "AIOS streaming") {
+        root.addView(sectionHeader("Transcription"))
+        val transportRow = settingsRow("Transcription method", "Live server streaming") {
             chooseTransport()
         }
         transportRowSub = transportRow.findViewWithTag("subtitle")
         root.addView(transportRow)
 
-        val streamUrlRow = settingsRow(
-            "Streaming WebSocket", "wss://stt.millsho.me/v1/audio/stream"
-        ) {
-            editLocalSetting("stream_url", "Streaming WebSocket URL",
+        root.addView(sectionHeader("Server connection"))
+        val streamUrlRow = settingsRow("Live streaming URL", "Secure WebSocket (wss://)") {
+            editLocalSetting("stream_url", "Live streaming URL",
                 "wss://stt.millsho.me/v1/audio/stream")
         }
         streamUrlSub = streamUrlRow.findViewWithTag("subtitle")
+        streamEndpointRow = streamUrlRow
         root.addView(streamUrlRow)
 
-        val batchUrlRow = settingsRow(
-            "AIOS batch endpoint", "https://stt.millsho.me/v1/audio/transcriptions"
-        ) {
-            editLocalSetting("batch_url", "AIOS batch endpoint",
+        val batchUrlRow = settingsRow("Batch transcription URL", "Secure HTTPS endpoint") {
+            editLocalSetting("batch_url", "Batch transcription URL",
                 "https://stt.millsho.me/v1/audio/transcriptions")
         }
         batchUrlSub = batchUrlRow.findViewWithTag("subtitle")
+        batchEndpointRow = batchUrlRow
         root.addView(batchUrlRow)
 
-        val streamTokenRow = settingsRow("AIOS bearer token", "Tap to configure") {
-            editLocalSetting("stream_token", "AIOS bearer token", "", secret = true)
+        val streamTokenRow = settingsRow("Server access token", "Tap to configure") {
+            editLocalSetting("stream_token", "Server access token", "", secret = true)
         }
         streamTokenSub = streamTokenRow.findViewWithTag("subtitle")
+        tokenEndpointRow = streamTokenRow
         root.addView(streamTokenRow)
+
+        val cleanupUrlRow = settingsRow("AI cleanup URL", "Secure HTTPS endpoint") {
+            editLocalSetting("cleanup_url", "AI cleanup URL",
+                "https://stt.millsho.me/v1/text/clean")
+        }
+        cleanupUrlSub = cleanupUrlRow.findViewWithTag("subtitle")
+        cleanupEndpointRow = cleanupUrlRow
+        root.addView(cleanupUrlRow)
+
+        root.addView(sectionHeader("Microphone and preview"))
 
         // Accessibility overlay options are independent of transcription mode.
         val visibilityRow = settingsRow("Microphone button", "Only when typing") {
@@ -190,26 +207,34 @@ class MainActivity : AppCompatActivity() {
         transcriptPositionSub = transcriptPositionRow.findViewWithTag("subtitle")
         root.addView(transcriptPositionRow)
 
+        root.addView(sectionHeader("AI cleanup"))
+        cleanupSwitch = MaterialSwitch(this).apply {
+            isChecked = prefs().getBoolean("cleanup_enabled", true)
+            isClickable = false
+        }
+        val postProcessRow = settingsRow(
+            "Improve text with AI",
+            "On · tap to record with cleanup; hold for raw dictation",
+            cleanupSwitch
+        ) {
+            val enabled = !prefs().getBoolean("cleanup_enabled", true)
+            prefs().edit().putBoolean("cleanup_enabled", enabled).apply()
+            cleanupSwitch.isChecked = enabled
+            refresh()
+        }
+        cleanupRowSub = postProcessRow.findViewWithTag("subtitle")
+        cleanupSettingsRow = postProcessRow
+        root.addView(postProcessRow)
+
+        root.addView(sectionHeader("Diagnostics"))
         val sessionRow = settingsRow("Last dictation", "No recent session")
         lastSessionSub = sessionRow.findViewWithTag("subtitle")
         root.addView(sessionRow)
 
-        // Local Models section
         modelContainer = vertical(0)
-        modelContainer.addView(sectionHeader("Local models"))
+        modelContainer.addView(sectionHeader("On-device speech models"))
         for (m in MODEL_CATALOG) modelContainer.addView(buildModelRow(m))
         root.addView(modelContainer)
-
-        // --- Post-Processing Section ---
-        root.addView(sectionHeader("AI cleanup"))
-        
-        val postProcessRow = settingsRow(
-            "AI cleanup (tap to dictate)",
-            "Tap to start/stop local AIOS cleanup via Ollama. " +
-                "Hold and release for raw transcription; no OpenAI key is needed."
-        )
-        cleanupSettingsRow = postProcessRow
-        root.addView(postProcessRow)
 
         promptContainer = vertical(0)
         for (preset in promptPresets()) promptContainer.addView(buildPromptRow(preset))
@@ -222,7 +247,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(promptRow)
 
         // --- Settings Section ---
-        root.addView(sectionHeader("Settings"))
+        root.addView(sectionHeader("Legacy cloud transcription"))
         
         val keyRow = settingsRow("OpenAI API key (legacy transcription only)", "Tap to set") { promptApiKey() }
         keyRowSub = keyRow.findViewWithTag("subtitle")
@@ -406,6 +431,8 @@ class MainActivity : AppCompatActivity() {
         val batchUrl = prefs().getString("batch_url",
             "https://stt.millsho.me/v1/audio/transcriptions").orEmpty()
         val streamToken = LocalSecrets.read(this)
+        val cleanupUrl = prefs().getString("cleanup_url", "https://stt.millsho.me/v1/text/clean").orEmpty()
+        val cleanupEnabled = prefs().getBoolean("cleanup_enabled", true)
         overlayVisibilitySub.text = if (
             prefs().getString("overlay_visibility", "focused") == "always"
         ) "Always" else "Only when typing"
@@ -420,11 +447,19 @@ class MainActivity : AppCompatActivity() {
         ) ?: "No recent session"
         val batchConfigured = AiosBatchFallbackPolicy.configured(batchUrl, streamToken)
         transportRowSub.text = when (mode) {
-            "streaming" -> if (batchConfigured) "AIOS streaming · AIOS batch backup configured"
-                else "AIOS streaming · no batch backup configured"
-            "local_batch" -> "AIOS server batch transcription"
-            else -> "Legacy on-device / existing API"
+            "streaming" -> if (batchConfigured) "Live streaming · batch backup configured"
+                else "Live streaming · no batch backup configured"
+            "local_batch" -> "Server batch transcription"
+            else -> if (useLocal) "On-device speech model" else "Legacy cloud transcription"
         }
+        cleanupSwitch.isChecked = cleanupEnabled
+        cleanupRowSub.text = if (cleanupEnabled) "On · tap to improve text; hold for raw dictation"
+            else "Off · tap and hold both insert raw text"
+        cleanupUrlSub.text = cleanupUrl.ifBlank { "Not configured" }
+        streamEndpointRow.visibility = if (mode == "streaming") View.VISIBLE else View.GONE
+        batchEndpointRow.visibility = if (mode == "streaming" || mode == "local_batch") View.VISIBLE else View.GONE
+        tokenEndpointRow.visibility = if (mode != "legacy" || cleanupEnabled) View.VISIBLE else View.GONE
+        cleanupEndpointRow.visibility = if (cleanupEnabled) View.VISIBLE else View.GONE
         streamUrlSub.text = streamUrl
         batchUrlSub.text = batchUrl
         streamTokenSub.text = if (streamToken.isBlank()) "Tap to configure"
@@ -466,7 +501,10 @@ class MainActivity : AppCompatActivity() {
             else -> localReady || cloudReady
         }
 
-        statusSubtitle.text = if (ready) "Ready — hold for raw dictation; tap to start/stop AI cleanup" else "Setup required"
+        statusSubtitle.text = if (ready)
+            (if (cleanupEnabled) "Ready · hold for raw text; tap for AI cleanup"
+             else "Ready · tap or hold for raw transcription")
+            else "Setup required · check permissions and transcription settings"
         statusSubtitle.setTextColor(if (ready) attrColor(com.google.android.material.R.attr.colorPrimary) else attrColor(android.R.attr.textColorSecondary))
         
         refreshAllCards()
@@ -474,12 +512,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun chooseTransport() {
-        val modes = arrayOf("AIOS streaming (recommended)",
-            "AIOS server batch", "Legacy on-device / existing API")
+        val modes = arrayOf("Live server streaming (recommended)",
+            "Server batch transcription", "On-device or legacy cloud")
         val values = arrayOf("streaming", "local_batch", "legacy")
         val current = prefs().getString("transcription_mode", "legacy")
         android.app.AlertDialog.Builder(this)
-            .setTitle("Dictation transport")
+            .setTitle("Transcription method")
             .setSingleChoiceItems(modes, values.indexOf(current).coerceAtLeast(0)) { dialog, choice ->
                 prefs().edit().putString("transcription_mode", values[choice]).apply()
                 dialog.dismiss()
@@ -506,7 +544,7 @@ class MainActivity : AppCompatActivity() {
                 val value = input.text.toString().trim()
                 if (secret) {
                     if (!LocalSecrets.store(this, value)) {
-                        toast("Could not save the AIOS token securely. Try again.")
+                        toast("Could not save the server access token securely. Try again.")
                     }
                 } else {
                     prefs().edit().putString(key, value).apply()

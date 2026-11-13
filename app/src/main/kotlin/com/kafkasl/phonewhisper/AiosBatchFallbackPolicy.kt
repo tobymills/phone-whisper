@@ -3,7 +3,7 @@ package com.kafkasl.phonewhisper
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
- * AIOS batch is an optional, network-based backup to live streaming.
+ * server batch is an optional, network-based backup to live streaming.
  * Configured means only that the endpoint and credential are usable as settings;
  * it does not establish server availability or authentication success.
  */
@@ -14,9 +14,9 @@ internal object AiosBatchFallbackPolicy {
     }
 
     fun streamingInterrupted(connected: Boolean): String =
-        if (connected) "Live transcription interrupted. Will try AIOS batch when you stop."
-        else "Live transcription interrupted. No AIOS batch backup is configured."
+        if (connected) "Live transcription interrupted. Will try server batch when you stop."
+        else "Live transcription interrupted. No server batch backup is configured."
 
     const val NO_BACKUP_ERROR =
-        "Transcription failed. AIOS streaming stopped and no AIOS batch backup is configured. Check Settings."
+        "Transcription failed. server streaming stopped and no server batch backup is configured. Check Settings."
 }

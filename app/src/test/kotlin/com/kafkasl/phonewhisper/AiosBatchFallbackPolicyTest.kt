@@ -15,8 +15,8 @@ class AiosBatchFallbackPolicyTest {
     }
 
     @Test fun warningDoesNotPromiseUnavailableFallback() {
-        assertTrue(AiosBatchFallbackPolicy.streamingInterrupted(true).contains("Will try AIOS batch"))
-        assertTrue(AiosBatchFallbackPolicy.streamingInterrupted(false).contains("No AIOS batch backup"))
+        assertTrue(AiosBatchFallbackPolicy.streamingInterrupted(true).contains("Will try server batch"))
+        assertTrue(AiosBatchFallbackPolicy.streamingInterrupted(false).contains("No server batch backup"))
         assertTrue(AiosBatchFallbackPolicy.NO_BACKUP_ERROR.contains("Transcription failed"))
     }
 }

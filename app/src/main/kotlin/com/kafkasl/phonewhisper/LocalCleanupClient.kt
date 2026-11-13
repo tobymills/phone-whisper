@@ -18,17 +18,18 @@ internal object LocalCleanupClient {
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(190, TimeUnit.SECONDS)
         .build()
-    private const val URL = "https://stt.millsho.me/v1/text/clean"
+    // The HTTPS cleanup endpoint is configured by the user.
     private const val MAX_CHARS = 100_000
 
-    fun clean(raw: String, token: String, callback: (Result) -> Unit) {
-        if (raw.isBlank() || raw.length > MAX_CHARS || token.isBlank()) {
+    fun clean(raw: String, url: String, token: String, callback: (Result) -> Unit) {
+        if (raw.isBlank() || raw.length > MAX_CHARS ||
+            !AiosBatchFallbackPolicy.configured(url, token)) {
             callback(Result(null, true))
             return
         }
         val body = JSONObject().put("text", raw).toString()
             .toRequestBody("application/json".toMediaType())
-        val request = Request.Builder().url(URL)
+        val request = Request.Builder().url(url)
             .header("Authorization", "Bearer $token")
             .post(body).build()
         client.newCall(request).enqueue(object : Callback {

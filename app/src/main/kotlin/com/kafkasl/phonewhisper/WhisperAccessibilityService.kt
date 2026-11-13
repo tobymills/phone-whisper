@@ -485,9 +485,9 @@ class WhisperAccessibilityService : AccessibilityService() {
         handler.post { button?.background = circle(color) }
     }
 
-    /** Enlarge the held microphone by 20% beyond the previous 1.15x scale; keep it within the overlay bounds. */
+    /** Enlarge the held microphone by another ~15% while preserving the touch target. */
     private fun setPushToTalkVisual(active: Boolean) {
-        val scale = if (active) 1.38f else 1f
+        val scale = if (active) 1.59f else 1f
         button?.scaleX = scale
         button?.scaleY = scale
     }
@@ -564,9 +564,11 @@ class WhisperAccessibilityService : AccessibilityService() {
     private fun onTap() {
         when (state) {
             State.IDLE -> {
-                startRecording(cleanUp = true)
+                val cleanup = prefs().getBoolean("cleanup_enabled", true)
+                startRecording(cleanUp = cleanup)
                 if (state == State.RECORDING || state == State.CONNECTING)
-                    showFeedback("AI cleanup — tap again to finish", 2200)
+                    showFeedback(if (cleanup) "Recording · tap again for AI cleanup"
+                        else "Recording · tap again to insert raw text", 2200)
             }
             State.CONNECTING, State.RECORDING -> stopAndTranscribe()
             State.TRANSCRIBING -> {}
@@ -610,7 +612,7 @@ class WhisperAccessibilityService : AccessibilityService() {
             toast("Microphone permission needed. Enable it in Phone Whisper settings."); return
         }
         sessionId++
-        cleanUpThisSession = cleanUp
+        cleanUpThisSession = cleanUp && prefs().getBoolean("cleanup_enabled", true)
         clearLivePreview()
         diagnosticId = UUID.randomUUID().toString().replace("-", "")
         fallbackNotified = false
@@ -656,7 +658,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         state = State.CONNECTING
         setBusy(true)
         setAppearance(COLOR_BUSY)
-        showFeedback("Connecting to AIOS", 3000)
+        showFeedback("Connecting to transcription server…", 3000)
         val stream = StreamingTranscriber(object : StreamingTranscriber.Listener {
             override fun onReady() {
                 handler.post {
@@ -691,7 +693,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                         recordStreamFailure()
                     } else {
                         recordStage("connected")
-                        showFeedback("AIOS streaming connected", 1200)
+                        showFeedback("Live transcription connected", 1200)
                     }
                 }
             }
@@ -739,7 +741,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         streamingSession = stream
         if (!stream.connect(url, token)) {
             streamingSession = null
-            reset("Check the AIOS streaming URL and access token in Settings.")
+            reset("Check the streaming URL and server token in Settings.")
             return
         }
         // Capture begins immediately; audio recorded before 'ready' is queued
@@ -870,7 +872,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                 fallBackToLocalBatch("Streaming interrupted")
             } else {
                 handler.postDelayed(finalTimeout, 150000)
-                showFeedback("Finalising on AIOS", 3000)
+                showFeedback("Finishing server transcription…", 3000)
             }
             return
         }
@@ -907,10 +909,10 @@ class WhisperAccessibilityService : AccessibilityService() {
                 } else {
                     recordStage("batch_failed",
                         if (recordingTransport == "local_batch_fallback") "batch_fallback" else "local_batch")
-                    val detail = result.error ?: "AIOS batch returned no text."
+                    val detail = result.error ?: "The server returned no text."
                     val prefix = if (recordingTransport == "local_batch_fallback")
-                        "Transcription failed after live streaming and AIOS batch. "
-                        else "AIOS batch transcription failed. "
+                        "Transcription failed after live streaming and server batch. "
+                        else "Server batch transcription failed. "
                     reset(prefix + detail)
                 }
             }
@@ -931,12 +933,12 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
         val pcm = pendingPcm
         if (pcm == null) {
-            reset("Transcription failed. Recorded audio is unavailable for AIOS batch retry.")
+            reset("Transcription failed. Recorded audio is unavailable for server batch retry.")
             return
         }
         recordingTransport = "local_batch_fallback"
         recordStage("batch_fallback", "batch_fallback")
-        showFeedback("Live transcription failed. Trying AIOS batch…", 3000)
+        showFeedback("Live transcription failed. Trying server batch…", 3000)
         sendLocalBatch(pcm)
     }
 
@@ -1096,12 +1098,14 @@ class WhisperAccessibilityService : AccessibilityService() {
         if (token.isBlank()) {
             recordStage("cleanup_unavailable", transcriptSource)
             injectTextToOriginalFocus(raw)
-            showFeedback("AIOS token missing. Original transcript inserted without cleanup.", 3500)
+            showFeedback("Server access token missing. Original transcript inserted without cleanup.", 3500)
             completeSession()
             return
         }
-        showFeedback("Cleaning up on AIOS…", 4000)
-        LocalCleanupClient.clean(raw, token) { result ->
+        showFeedback("Improving text with AI…", 4000)
+        val cleanupUrl = prefs().getString("cleanup_url",
+            "https://stt.millsho.me/v1/text/clean").orEmpty()
+        LocalCleanupClient.clean(raw, cleanupUrl, token) { result ->
             handler.post {
                 if (current != sessionId || state != State.TRANSCRIBING) return@post
                 val cleaned = result.text?.takeIf { it.isNotBlank() }
