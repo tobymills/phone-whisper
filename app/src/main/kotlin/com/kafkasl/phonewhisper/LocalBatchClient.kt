@@ -55,12 +55,12 @@ object LocalBatchClient {
                 response.use {
                     if (!it.isSuccessful) {
                         val explanation = when (it.code) {
-                            401 -> "server authentication failed. Check your access token."
-                            403 -> "server denied this transcription request."
-                            408, 504 -> "server batch transcription timed out."
-                            413 -> "Recording is too large for the server server."
-                            429, 503 -> "server batch is temporarily unavailable. Try again."
-                            else -> "server batch request failed (HTTP ${it.code})."
+                            401 -> "Server authentication failed. Check your access token."
+                            403 -> "The server denied this transcription request."
+                            408, 504 -> "Server batch transcription timed out."
+                            413 -> "Recording is too large for the transcription server."
+                            429, 503 -> "Server batch transcription is temporarily unavailable. Try again."
+                            else -> "Server batch request failed (HTTP ${it.code})."
                         }
                         callback(TranscriberClient.Result(null, explanation))
                     } else {
@@ -68,7 +68,7 @@ object LocalBatchClient {
                             it.body?.string().orEmpty()
                         )
                         callback(if (parsed.text.isNullOrBlank())
-                            TranscriberClient.Result(null, "server returned no usable transcript.")
+                            TranscriberClient.Result(null, "The server returned no usable transcript.")
                             else parsed)
                     }
                 }

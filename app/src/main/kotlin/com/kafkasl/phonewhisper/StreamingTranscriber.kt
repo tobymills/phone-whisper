@@ -66,7 +66,7 @@ class StreamingTranscriber(
                 val ok = webSocket.send(
                     """{"type":"start","version":1,"sample_rate":16000,"channels":1,"encoding":"pcm_s16le"}"""
                 )
-                if (!ok) fail("Could not start the Server streaming session.")
+                if (!ok) fail("Could not start live transcription.")
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -74,7 +74,7 @@ class StreamingTranscriber(
                 val message = try {
                     transcript.receive(text)
                 } catch (_: Exception) {
-                    fail("Server streaming returned an invalid response.")
+                    fail("The streaming server returned an invalid response.")
                     return
                 }
                 // A listener exception is a client fault, not malformed server JSON.
@@ -106,14 +106,14 @@ class StreamingTranscriber(
                 warn("session=$sessionId socket_failure http=${response?.code ?: 0} cause=${t.javaClass.simpleName}")
                 fail(when (response?.code) {
                     401 -> "Server authentication failed. Check your access token."
-                    403, 429, 503 -> "Server streaming is busy or unavailable."
-                    else -> "Could not connect to Server streaming."
+                    403, 429, 503 -> "The streaming server is busy or unavailable."
+                    else -> "Could not connect to the streaming server."
                 })
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 info("session=$sessionId closed code=$code")
-                if (!terminal.get()) fail("Server streaming closed before transcription finished.")
+                if (!terminal.get()) fail("The streaming server closed before transcription finished.")
             }
         })
         return true

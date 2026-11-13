@@ -473,7 +473,7 @@ class MainActivity : AppCompatActivity() {
         cleanupSettingsRow.visibility = View.VISIBLE
         apiKeySettingsRow.visibility = if (legacy) View.VISIBLE else View.GONE
         modelContainer.visibility = if (legacy && useLocal) View.VISIBLE else View.GONE
-        // AIOS owns the cleanup prompt; the legacy prompt controls do not apply.
+        // The configured cleanup service owns the prompt; legacy controls do not apply.
         promptContainer.visibility = View.GONE
         promptRow.visibility = View.GONE
 
@@ -502,8 +502,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         statusSubtitle.text = if (ready)
-            (if (cleanupEnabled) "Ready · hold for raw text; tap for AI cleanup"
-             else "Ready · tap or hold for raw transcription")
+            (if (cleanupEnabled) "Configured · hold for raw text; tap for AI cleanup"
+             else "Configured · tap or hold for raw transcription")
             else "Setup required · check permissions and transcription settings"
         statusSubtitle.setTextColor(if (ready) attrColor(com.google.android.material.R.attr.colorPrimary) else attrColor(android.R.attr.textColorSecondary))
         

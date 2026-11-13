@@ -18,5 +18,5 @@ internal object AiosBatchFallbackPolicy {
         else "Live transcription interrupted. No server batch backup is configured."
 
     const val NO_BACKUP_ERROR =
-        "Transcription failed. server streaming stopped and no server batch backup is configured. Check Settings."
+        "Transcription failed. Live streaming stopped and no server batch backup is configured. Check Settings."
 }

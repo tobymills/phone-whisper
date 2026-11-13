@@ -891,7 +891,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** Send complete retained PCM to the configured AIOS HTTPS batch endpoint only. */
+    /** Send recorded PCM to the configured HTTPS server batch endpoint. */
     private fun sendLocalBatch(pcm: ByteArray) {
         val url = prefs().getString("batch_url",
             "https://stt.millsho.me/v1/audio/transcriptions") ?: ""
