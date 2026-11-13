@@ -824,7 +824,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                         handler.post {
                             // Error is logged once; no more partial WSS updates
                             // are displayed while batch capture continues.
-                            recordStreamFailure("Streaming interrupted — local batch on stop")
+                            recordStreamFailure()
                         }
                     }
                 } else if (n < 0) {
