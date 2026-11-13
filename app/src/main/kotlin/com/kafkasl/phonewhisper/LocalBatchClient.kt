@@ -23,11 +23,15 @@ object LocalBatchClient {
         .build()
 
     fun transcribe(
-        wav: ByteArray, url: String, token: String,
+        wav: ByteArray, url: String, token: String, modelId: String,
         callback: (TranscriberClient.Result) -> Unit
     ) {
         if (!AiosBatchFallbackPolicy.configured(url, token)) {
             callback(TranscriberClient.Result(null, "Check the server batch URL and access token in Settings."))
+            return
+        }
+        if (modelId.isBlank()) {
+            callback(TranscriberClient.Result(null, "Set a batch model ID in Settings."))
             return
         }
         if (wav.size > MAX_WAV_BYTES) {
@@ -36,7 +40,7 @@ object LocalBatchClient {
         }
         val request = try {
             val body = MultipartBody.Builder().setType(MultipartBody.FORM)
-                .addFormDataPart("model", "large-v3-turbo-q5_0")
+                .addFormDataPart("model", modelId)
                 .addFormDataPart("file", "recording.wav",
                     wav.toRequestBody("audio/wav".toMediaType()))
                 .build()

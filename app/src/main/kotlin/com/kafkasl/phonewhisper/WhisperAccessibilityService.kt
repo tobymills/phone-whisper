@@ -897,7 +897,8 @@ class WhisperAccessibilityService : AccessibilityService() {
             "https://stt.millsho.me/v1/audio/transcriptions") ?: ""
         val token = LocalSecrets.read(this)
         val current = sessionId
-        LocalBatchClient.transcribe(WavWriter.encode(pcm), url, token) { result ->
+        val modelId = prefs().getString("batch_model", "large-v3-turbo-q5_0").orEmpty()
+        LocalBatchClient.transcribe(WavWriter.encode(pcm), url, token, modelId) { result ->
             handler.post {
                 if (current != sessionId || state != State.TRANSCRIBING
                     || finalInserted) return@post

@@ -21,8 +21,9 @@ Scope: Android settings layout and user-visible status/error copy on `feature/lo
 ## Compatibility limitations
 
 - Current server endpoint defaults remain for upgraded installations and may be changed in Settings.
+- The cleanup response's private status header is optional; explicit raw/fallback statuses are still respected.
 - The live streaming protocol remains the existing app-specific WebSocket v1 protocol. The cleanup endpoint still expects the existing authenticated JSON `/v1/text/clean` contract. Configurable URLs do **not** make arbitrary speech servers compatible.
-- Batch transcription currently submits the existing model field `large-v3-turbo-q5_0`; other servers may require a different model or adapter.
+- Batch transcription now has an editable model identifier, defaulting to `large-v3-turbo-q5_0` for compatibility. The server must support the current multipart transcription API.
 - No Android-on-device offline fallback is introduced.
 - The Android APK and UI changes require physical handset validation; CI is not a substitute.
 

@@ -46,7 +46,11 @@ internal object LocalCleanupClient {
                         JSONObject(it.body?.string().orEmpty())
                             .optString("text").takeIf { value -> value.isNotBlank() }
                     } catch (_: Exception) { null }
-                    val fallback = it.header("X-STT-Cleanup") != "local"
+                    // Compatible servers need not send the private cleanup status header.
+                    // Honour explicit raw/fallback status when supplied.
+                    val status = it.header("X-STT-Cleanup")
+                    val fallback = cleaned == null ||
+                        (status != null && status != "local")
                     callback(Result(cleaned, fallback))
                 }
             }

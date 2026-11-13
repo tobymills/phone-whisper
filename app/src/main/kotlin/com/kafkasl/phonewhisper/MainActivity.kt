@@ -45,6 +45,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var transportRowSub: TextView
     private lateinit var streamUrlSub: TextView
     private lateinit var batchUrlSub: TextView
+    private lateinit var batchModelSub: TextView
+    private lateinit var batchModelRow: LinearLayout
     private lateinit var streamTokenSub: TextView
     private lateinit var promptRowSub: TextView
     private lateinit var promptRow: LinearLayout
@@ -141,6 +143,13 @@ class MainActivity : AppCompatActivity() {
         batchUrlSub = batchUrlRow.findViewWithTag("subtitle")
         batchEndpointRow = batchUrlRow
         root.addView(batchUrlRow)
+
+        val modelRow = settingsRow("Batch model ID", "Model identifier expected by your server") {
+            editLocalSetting("batch_model", "Batch model ID", "large-v3-turbo-q5_0")
+        }
+        batchModelSub = modelRow.findViewWithTag("subtitle")
+        batchModelRow = modelRow
+        root.addView(modelRow)
 
         val streamTokenRow = settingsRow("Server access token", "Tap to configure") {
             editLocalSetting("stream_token", "Server access token", "", secret = true)
@@ -433,6 +442,7 @@ class MainActivity : AppCompatActivity() {
         val streamToken = LocalSecrets.read(this)
         val cleanupUrl = prefs().getString("cleanup_url", "https://stt.millsho.me/v1/text/clean").orEmpty()
         val cleanupEnabled = prefs().getBoolean("cleanup_enabled", true)
+        val batchModel = prefs().getString("batch_model", "large-v3-turbo-q5_0").orEmpty()
         overlayVisibilitySub.text = if (
             prefs().getString("overlay_visibility", "focused") == "always"
         ) "Always" else "Only when typing"
@@ -456,8 +466,10 @@ class MainActivity : AppCompatActivity() {
         cleanupRowSub.text = if (cleanupEnabled) "On · tap to improve text; hold for raw dictation"
             else "Off · tap and hold both insert raw text"
         cleanupUrlSub.text = cleanupUrl.ifBlank { "Not configured" }
+        batchModelSub.text = batchModel.ifBlank { "Not configured" }
         streamEndpointRow.visibility = if (mode == "streaming") View.VISIBLE else View.GONE
         batchEndpointRow.visibility = if (mode == "streaming" || mode == "local_batch") View.VISIBLE else View.GONE
+        batchModelRow.visibility = batchEndpointRow.visibility
         tokenEndpointRow.visibility = if (mode != "legacy" || cleanupEnabled) View.VISIBLE else View.GONE
         cleanupEndpointRow.visibility = if (cleanupEnabled) View.VISIBLE else View.GONE
         streamUrlSub.text = streamUrl
