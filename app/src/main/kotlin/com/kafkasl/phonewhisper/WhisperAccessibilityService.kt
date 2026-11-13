@@ -90,7 +90,7 @@ class WhisperAccessibilityService : AccessibilityService() {
             && !streamReady && !streamingFailed) {
             streamingFailed = true
             streamingSession?.cancel()
-            showFeedback("AIOS connection timed out — local batch on stop", 4000)
+            showFeedback("Live connection timed out. Will try AIOS batch when you stop.", 4000)
         }
     }
     private var recordingThread: Thread? = null
@@ -607,7 +607,7 @@ class WhisperAccessibilityService : AccessibilityService() {
     private fun startRecording(cleanUp: Boolean) {
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
             != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            toast("Grant audio permission in Phone Whisper app"); return
+            toast("Microphone permission needed. Enable it in Phone Whisper settings."); return
         }
         sessionId++
         cleanUpThisSession = cleanUp
@@ -617,7 +617,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         finalInserted = false
         startingFocus = captureFocus()
         if (startingFocus?.isPassword == true) {
-            reset("Dictation into password fields is disabled")
+            reset("Dictation is not available in password fields.")
             return
         }
         recordingTransport = prefs().getString("transcription_mode", "legacy") ?: "legacy"
@@ -682,7 +682,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                         // microphone recording is retained for one HTTPS batch retry.
                         streamReady = false
                         streamingSession?.cancel()
-                        recordStreamFailure("Streaming interrupted — local batch on stop")
+                        recordStreamFailure("Live transcription interrupted. Will try AIOS batch when you stop.")
                     } else {
                         recordStage("connected")
                         showFeedback("AIOS streaming connected", 1200)
@@ -718,7 +718,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                         State.RECORDING -> {
                             streamingFailed = true
                             streamReady = false
-                            recordStreamFailure("Stream lost — local batch on stop")
+                            recordStreamFailure("Live connection lost. Will try AIOS batch when you stop.")
                         }
                         State.CONNECTING -> reset(reason)
                         State.TRANSCRIBING -> {
@@ -733,7 +733,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         streamingSession = stream
         if (!stream.connect(url, token)) {
             streamingSession = null
-            reset("Set a secure WSS endpoint and AIOS token")
+            reset("Check the AIOS streaming URL and access token in Settings.")
             return
         }
         // Capture begins immediately; audio recorded before 'ready' is queued
@@ -747,7 +747,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
             != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             streamingSession?.cancel()
-            reset("Microphone permission unavailable")
+            reset("Microphone permission unavailable. Check Android app permissions.")
             return
         }
         val minimum = AudioRecord.getMinBufferSize(
@@ -755,7 +755,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         )
         if (minimum <= 0) {
             streamingSession?.cancel()
-            reset("Microphone format unavailable")
+            reset("Could not access the required microphone audio format.")
             return
         }
         val bufSize = maxOf(minimum, 4096).let { if (it % 2 == 0) it else it + 1 }
@@ -766,11 +766,11 @@ class WhisperAccessibilityService : AccessibilityService() {
             )
         } catch (_: SecurityException) {
             streamingSession?.cancel()
-            reset("Microphone permission revoked")
+            reset("Microphone permission removed. Re-enable it in Android settings.")
             return
         } catch (_: IllegalArgumentException) {
             streamingSession?.cancel()
-            reset("Microphone initialisation failed")
+            reset("Could not initialise the microphone. Try again.")
             return
         }
 
@@ -780,7 +780,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         } catch (_: Exception) {
             audioRecord?.release()
             audioRecord = null
-            reset("Could not start microphone")
+            reset("Could not start recording. Check whether another app is using the microphone.")
             return
         }
         state = State.RECORDING
@@ -846,7 +846,7 @@ class WhisperAccessibilityService : AccessibilityService() {
             streamingSession?.cancel()
             audioRecord?.release()
             audioRecord = null
-            reset("Microphone capture did not stop safely")
+            reset("Recording could not stop safely. Please try again.")
             return
         }
         audioRecord?.release()
@@ -856,7 +856,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         val pcm = pcmStream?.toByteArray() ?: ByteArray(0)
         pcmStream = null
 
-        if (pcm.isEmpty()) { reset("No audio captured"); return }
+        if (pcm.isEmpty()) { reset("No audio was recorded. Please try again."); return }
         handler.removeCallbacks(handshakeTimeout)
         if (recordingTransport == "streaming") {
             pendingPcm = pcm
@@ -901,7 +901,11 @@ class WhisperAccessibilityService : AccessibilityService() {
                 } else {
                     recordStage("batch_failed",
                         if (recordingTransport == "local_batch_fallback") "batch_fallback" else "local_batch")
-                    reset(result.error ?: "Local batch transcription failed")
+                    val detail = result.error ?: "AIOS batch returned no text."
+                    val prefix = if (recordingTransport == "local_batch_fallback")
+                        "Transcription failed after live streaming and AIOS batch. "
+                        else "AIOS batch transcription failed. "
+                    reset(prefix + detail)
                 }
             }
         }
@@ -921,7 +925,7 @@ class WhisperAccessibilityService : AccessibilityService() {
             reset(reason)
             return
         }
-        showFeedback("Using local batch fallback", 3000)
+        showFeedback("Live transcription failed. Trying AIOS batch…", 3000)
         sendLocalBatch(pcm)
     }
 
@@ -999,7 +1003,7 @@ class WhisperAccessibilityService : AccessibilityService() {
             nodes.forEach { it.recycle() }
         }
         recordStage(if (injected) "injected" else "clipboard", transcriptSource)
-        showFeedback(if (injected) "Inserted" else "Focus changed — copied to clipboard", 3000)
+        showFeedback(if (injected) "Inserted" else "Text field changed. Transcript copied to clipboard.", 3000)
     }
 
     private fun transcribeLocal(pcm: ByteArray, transcriber: LocalTranscriber) {
@@ -1022,7 +1026,7 @@ class WhisperAccessibilityService : AccessibilityService() {
             } catch (e: Exception) {
                 Log.e(TAG, "Local transcription failed", e)
                 handler.post {
-                    toast("Local error: ${e.message}")
+                    toast("On-device transcription failed. Check that a model is installed.")
                     recordStage("failed", "legacy")
                     state = State.IDLE
                     setBusy(false)
@@ -1036,14 +1040,14 @@ class WhisperAccessibilityService : AccessibilityService() {
     private fun transcribeApi(pcm: ByteArray) {
         val wav = WavWriter.encode(pcm)
         val apiKey = prefs().getString("api_key", "") ?: ""
-        if (apiKey.isBlank()) { reset("Set API key in Phone Whisper app"); return }
+        if (apiKey.isBlank()) { reset("An OpenAI API key is required for legacy cloud transcription."); return }
 
         TranscriberClient.transcribe(wav, apiKey) { result ->
             if (result.text != null && result.text.isNotBlank()) {
                 handleTranscriptionResult(result.text)
             } else {
                 handler.post {
-                    toast("Error: ${result.error ?: "empty transcript"}")
+                    toast("Legacy cloud transcription failed. Check your API key and connection.")
                     recordStage("failed", "legacy")
                     state = State.IDLE
                     setBusy(false)
@@ -1067,7 +1071,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         if (state != State.TRANSCRIBING || finalInserted) return
         finalInserted = true
         if (raw.isBlank()) {
-            showFeedback("No speech detected", 2000)
+            showFeedback("No speech detected. Nothing was inserted.", 2000)
             completeSession()
             return
         }
@@ -1081,7 +1085,7 @@ class WhisperAccessibilityService : AccessibilityService() {
         if (token.isBlank()) {
             recordStage("cleanup_unavailable", transcriptSource)
             injectTextToOriginalFocus(raw)
-            showFeedback("AIOS token missing — raw transcript used", 3500)
+            showFeedback("AIOS token missing. Original transcript inserted without cleanup.", 3500)
             completeSession()
             return
         }
@@ -1094,7 +1098,7 @@ class WhisperAccessibilityService : AccessibilityService() {
                     "cleanup_success" else "cleanup_failed", transcriptSource)
                 injectTextToOriginalFocus(cleaned ?: raw)
                 if (cleaned == null || result.usedRaw) showFeedback(
-                    "AIOS cleanup unavailable — raw transcript used", 3500
+                    "AI cleanup unavailable. Original transcript inserted.", 3500
                 )
                 completeSession()
             }

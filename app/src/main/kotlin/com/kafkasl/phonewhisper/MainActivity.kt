@@ -128,9 +128,9 @@ class MainActivity : AppCompatActivity() {
         root.addView(streamUrlRow)
 
         val batchUrlRow = settingsRow(
-            "Local batch endpoint", "https://stt.millsho.me/v1/audio/transcriptions"
+            "AIOS batch endpoint", "https://stt.millsho.me/v1/audio/transcriptions"
         ) {
-            editLocalSetting("batch_url", "Local batch endpoint",
+            editLocalSetting("batch_url", "AIOS batch endpoint",
                 "https://stt.millsho.me/v1/audio/transcriptions")
         }
         batchUrlSub = batchUrlRow.findViewWithTag("subtitle")
@@ -323,7 +323,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     is DownloadState.Error -> {
                         views.progress.visibility = View.GONE
-                        views.subtitle.text = "Error: ${state.message}"
+                        views.subtitle.text = "Model download failed. Check your connection and try again."
                         views.dlBtn.isEnabled = true
                     }
                 }
@@ -419,8 +419,8 @@ class MainActivity : AppCompatActivity() {
             SessionDiagnostics.KEY, "No recent session"
         ) ?: "No recent session"
         transportRowSub.text = when (mode) {
-            "streaming" -> "AIOS live streaming + local batch fallback"
-            "local_batch" -> "AIOS local batch transcription"
+            "streaming" -> "AIOS streaming · AIOS batch backup"
+            "local_batch" -> "AIOS server batch transcription"
             else -> "Legacy on-device / existing API"
         }
         streamUrlSub.text = streamUrl
@@ -474,7 +474,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun chooseTransport() {
         val modes = arrayOf("AIOS streaming (recommended)",
-            "AIOS local batch", "Legacy on-device / existing API")
+            "AIOS server batch", "Legacy on-device / existing API")
         val values = arrayOf("streaming", "local_batch", "legacy")
         val current = prefs().getString("transcription_mode", "legacy")
         android.app.AlertDialog.Builder(this)
@@ -505,7 +505,7 @@ class MainActivity : AppCompatActivity() {
                 val value = input.text.toString().trim()
                 if (secret) {
                     if (!LocalSecrets.store(this, value)) {
-                        toast("Could not securely store the AIOS token")
+                        toast("Could not save the AIOS token securely. Try again.")
                     }
                 } else {
                     prefs().edit().putString(key, value).apply()
